@@ -193,7 +193,17 @@ lifecycle, hooks, session management and handoff are identical either way.
 | `edit_file(path, old, new)` | Replace an exact string that appears once |
 | `delete_file(path)` | Move a file to `data/trash/<timestamp>/`, recoverable |
 | `list_files(dir, pattern, depth)` | Find what exists before reading it |
+| `search_files(pattern, dir, glob, regex)` | Search contents; returns `file:line` and the matching line |
+| `run_command(command, args)` | Run a program to check its own work |
 | `write_note(name, body)` | The agent's own scratch space under `data/notes` |
+
+`list_files` answers *what exists*, `search_files` answers *where is it*. The
+search walks rather than shelling out to grep or ripgrep, so it behaves the
+same on a machine that has neither, and it skips the same generated trees the
+listing skips. It is read-only, so approval does not gate it — which is why it
+also skips keys and `credentials.json` itself: the guard checks the directory
+being searched, not every file found inside it, and a match line quotes the
+contents back.
 
 Three layers stand between the model and the disk, and they are deliberately
 not the same check written three times:

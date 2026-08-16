@@ -70,6 +70,51 @@ try {
   });
   assert.deepEqual(shallow.files.sort(), [at("a.txt"), at("dup.txt")].sort());
 
+  // --- search reads contents, not names ---------------------------------------
+  await run("write_file", {
+    path: at("search/hay.ts"),
+    content: "const needle = 1;\nconst other = 2;\nNEEDLE_UPPER\n",
+  });
+  await run("write_file", { path: at("search/hay.md"), content: "needle in prose\n" });
+
+  const found = await run("search_files", { pattern: "needle", dir: "tmp-smoke-files" });
+  assert.equal(found.files, 2, "both files matched");
+  assert.deepEqual(
+    found.matches.map((m: { line: number }) => m.line).sort(),
+    [1, 1, 3],
+    "case-insensitive, and the line numbers are 1-based",
+  );
+  assert.ok(
+    found.matches.every((m: { text: string }) => !m.text.startsWith(" ")),
+    "match text is trimmed",
+  );
+
+  // glob narrows by file name, regex changes how the pattern is read.
+  const scoped = await run("search_files", {
+    pattern: "needle",
+    dir: "tmp-smoke-files",
+    glob: "*.md",
+  });
+  assert.equal(scoped.files, 1);
+
+  const plain = await run("search_files", { pattern: "const.other", dir: "tmp-smoke-files" });
+  assert.equal(plain.matches.length, 0, "a dot is a dot unless regex is set");
+  const asRegex = await run("search_files", {
+    pattern: "const.other",
+    dir: "tmp-smoke-files",
+    regex: true,
+  });
+  assert.equal(asRegex.matches.length, 1);
+
+  // Contents of a secret are never quoted back, even though searching is
+  // read-only and ungated.
+  fs.writeFileSync(path.join(SCRATCH, "search/credentials.json"), '{"needle":"secret"}');
+  const guarded = await run("search_files", { pattern: "needle", dir: "tmp-smoke-files" });
+  assert.ok(
+    guarded.matches.every((m: { file: string }) => !m.file.includes("credentials")),
+    "credentials.json is skipped",
+  );
+
   // --- delete moves to the trash rather than unlinking ------------------------
   await run("write_file", { path: at("gone.txt"), content: "bye" });
   const del = await run("delete_file", { path: at("gone.txt") });

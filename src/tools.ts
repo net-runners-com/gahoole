@@ -162,6 +162,75 @@ export const deleteFile = createTool({
 });
 
 /**
+ * Search file contents.
+ *
+ * `list_files` answers "what exists"; this answers "where is it". Without it
+ * the model reaches for the shell — the screenshot that prompted this shows it
+ * trying `pwd` to locate a file it had just written, which failed because pwd
+ * was not on the allowlist and would not have answered the question anyway.
+ *
+ * Implemented by walking rather than shelling out to grep or ripgrep: it has
+ * to work the same on a machine that has neither, and the walk already knows
+ * which directories are not worth reading.
+ */
+export const searchFiles = createTool({
+  id: "search_files",
+  description:
+    "Search file contents and return the matching lines with their file and line number. Use to find where something is defined or mentioned, before reading whole files.",
+  inputSchema: z.object({
+    pattern: z.string().describe("Text to find, or a regular expression"),
+    dir: z.string().optional().describe("Where to search; defaults to the project"),
+    glob: z.string().optional().describe("Only files matching this, e.g. *.ts"),
+    regex: z.boolean().optional().describe("Treat the pattern as a regex"),
+  }),
+  outputSchema: z.object({
+    matches: z.array(z.object({ file: z.string(), line: z.number(), text: z.string() })),
+    files: z.number(),
+    truncated: z.boolean(),
+  }),
+  execute: async ({ pattern, dir, glob, regex }) => {
+    const re = regex
+      ? new RegExp(pattern, "i")
+      : new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    const start = resolveInRoot(dir ?? ".");
+    const candidates: string[] = [];
+    await walk(start, 6, glob ? globToRegExp(glob) : undefined, candidates);
+
+    const matches: { file: string; line: number; text: string }[] = [];
+    const seen = new Set<string>();
+    for (const file of candidates) {
+      if (matches.length >= 60) break;
+      // The guard checks the directory being searched, not each file found in
+      // it. A secret that is not a dotfile — a key, a credentials.json — would
+      // otherwise have its contents quoted back in a match line, which is the
+      // one way a read-only tool can leak.
+      if (SECRET_FILE.test(rel(file))) continue;
+      let text: string;
+      try {
+        const stat = await fs.stat(file);
+        if (stat.size > 2_000_000) continue; // not a file anyone greps
+        text = await fs.readFile(file, "utf8");
+      } catch {
+        continue;
+      }
+      if (text.includes("\u0000")) continue; // binary
+      const lines = text.split("\n");
+      for (let i = 0; i < lines.length && matches.length < 60; i++) {
+        const line = lines[i]!;
+        if (!re.test(line)) continue;
+        seen.add(file);
+        matches.push({
+          file: rel(file),
+          line: i + 1,
+          text: line.trim().slice(0, 200),
+        });
+      }
+    }
+    return { matches, files: seen.size, truncated: matches.length >= 60 };
+  },
+});
+
+/**
  * Running a command.
  *
  * Without this the model has no way to check its own work, and a model asked
@@ -173,7 +242,8 @@ export const deleteFile = createTool({
  */
 const ALLOWED = new Set(
   (process.env.GAHOOLE_COMMANDS ??
-    "node,npm,npx,python3,python,g++,gcc,clang,clang++,make,cargo,go,tsc,jest,vitest,pytest,ls,cat,echo,grep,rg,find,git,./a.out"
+    "node,npm,npx,python3,python,g++,gcc,clang,clang++,make,cargo,go,tsc,jest,vitest,pytest," +
+    "ls,cat,echo,grep,rg,find,git,pwd,wc,head,tail,sort,uniq,diff,file,which,date"
   )
     .split(",")
     .map((c) => c.trim())
@@ -253,6 +323,12 @@ export const writeNote = createTool({
 /** Directories that are never worth walking and never worth reading. */
 const SKIP = new Set([".git", "node_modules", "dist", "data", ".cloakbrowser"]);
 
+/**
+ * Secrets that are not dotfiles, and so survive the walk's dot filter. Kept
+ * here rather than imported from the guard because the guard imports this file.
+ */
+const SECRET_FILE = /(\.(pem|key|p12|keystore)$|credentials?\.json$|(^|\/)id_(rsa|ed25519)$)/;
+
 async function walk(
   dir: string,
   depth: number,
@@ -295,6 +371,7 @@ export const tools = {
   edit_file: editFile,
   delete_file: deleteFile,
   list_files: listFiles,
+  search_files: searchFiles,
   run_command: runCommand,
   write_note: writeNote,
 };
