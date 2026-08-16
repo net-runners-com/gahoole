@@ -18,7 +18,9 @@ export class Session {
   #closed = false;
 
   /** Supplied by the CLI; replaces agent.generate() when set. */
-  static backend?: { ask(prompt: string): Promise<string> };
+  static backend?: {
+    ask(prompt: string, attachments?: string[]): Promise<string>;
+  };
 
   private constructor(
     id: string,
@@ -69,6 +71,7 @@ export class Session {
   async run(
     prompt: string,
     executor?: (prompt: string) => Promise<string>,
+    attachments: string[] = [],
   ): Promise<string> {
     if (this.#closed) throw new Error(`session ${this.id} is closed`);
 
@@ -92,7 +95,7 @@ export class Session {
     try {
       const text = await turnStore.run(ctx, async () => {
         if (executor) return executor(prompt);
-        if (Session.backend) return Session.backend.ask(prompt);
+        if (Session.backend) return Session.backend.ask(prompt, attachments);
         const res = await this.agent.generate(prompt, {
           memory: { resource: this.resourceId, thread: this.id },
         });

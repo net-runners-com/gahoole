@@ -10,11 +10,15 @@
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Lifecycle } from "./lifecycle.js";
 import { createAgent, createMemory, createToolHooks } from "./agent.js";
 import { turnStore, type TurnContext } from "./turn-context.js";
 import { Session } from "./session.js";
 import { AmbiguousSessionError, SessionStore } from "./sessions.js";
+import { extractAttachments } from "./attachments.js";
 
 const seen: string[] = [];
 
@@ -78,6 +82,27 @@ await turnStore.run(ctx, async () => {
 
 assert.equal(ctx.toolCalls, 2, "both calls counted on the turn");
 assert.deepEqual(seen, ["PreToolUse", "PostToolUse", "PreToolUse"]);
+
+// --- attachment extraction ---------------------------------------------------
+{
+  const tmp = path.join(os.tmpdir(), `gahoole-smoke-${randomUUID().slice(0, 8)}.png`);
+  fs.writeFileSync(tmp, "not really a png, but it exists");
+
+  // A dragged-in path arrives quoted and is stripped out of the question.
+  const quoted = extractAttachments(`'${tmp}' これ何`);
+  assert.deepEqual(quoted.paths, [tmp]);
+  assert.equal(quoted.prompt, "これ何");
+
+  // Bare paths work too, as long as the file is really there.
+  assert.deepEqual(extractAttachments(tmp).paths, [tmp]);
+
+  // Merely naming a file is not an attachment.
+  assert.deepEqual(extractAttachments("look at screenshot.png please").paths, []);
+  // Nor is a real file that is not an image.
+  assert.deepEqual(extractAttachments("package.json").paths, []);
+
+  fs.rmSync(tmp);
+}
 
 // --- session scope ----------------------------------------------------------
 const resourceId = `smoke-${randomUUID().slice(0, 8)}`;

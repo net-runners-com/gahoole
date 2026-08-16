@@ -104,7 +104,6 @@ const tools = {
 // A tool is called, its result comes back, then the model answers.
 {
   const stub = new StubBackend([
-    "ok",
     'TOOL_CALL: {"tool":"read_file","input":{"path":"a.txt"}}',
     "The file says hello.",
   ]);
@@ -114,17 +113,17 @@ const tools = {
   assert.equal(answer, "The file says hello.");
   assert.equal(executed, 1);
   assert.deepEqual(seen, ["pre:read_file", "post:read_file"]);
-  assert.ok(stub.prompts[0]?.includes("TOOL_CALL:"), "preamble sent first");
-  // The question carries the rule restated, because the preamble alone does
-  // not survive several turns on a search-shaped model.
-  assert.ok(stub.prompts[1]?.endsWith("what is in a.txt?"));
+  // The preamble rides on the first question rather than costing a turn.
+  assert.equal(stub.prompts.length, 2, "one round trip per exchange");
+  assert.ok(stub.prompts[0]?.endsWith("what is in a.txt?"));
+  assert.ok(stub.prompts[0]?.includes("Available tools:"), "preamble included");
   assert.ok(
-    stub.prompts[1]?.includes("Tools you can run here: read_file(path)"),
-    "the rule is restated with the question",
+    stub.prompts[0]?.includes("Tools you can run here: read_file(path)"),
+    "and the rule restated with the question",
   );
   assert.ok(
-    stub.prompts[2]?.includes("TOOL_RESULT:") &&
-      stub.prompts[2].includes("contents of a.txt"),
+    stub.prompts[1]?.includes("TOOL_RESULT:") &&
+      stub.prompts[1].includes("contents of a.txt"),
     "the result is fed back",
   );
 }
@@ -133,7 +132,6 @@ const tools = {
 {
   seen.length = 0;
   const stub = new StubBackend([
-    "ok", // the preamble turn
     'TOOL_CALL: {"tool":"write_note","input":{"name":"x","body":"y"}}',
     "I could not save that.",
   ]);
@@ -152,7 +150,6 @@ const tools = {
 // An unknown tool is an error the model can recover from.
 {
   const stub = new StubBackend([
-    "ok", // the preamble turn
     'TOOL_CALL: {"tool":"nope","input":{}}',
     "That tool does not exist.",
   ]);
@@ -164,15 +161,14 @@ const tools = {
 
 // A model that only ever asks for tools is stopped rather than looped forever.
 {
-  const stub = new StubBackend([
-    "ok", // the preamble turn
-    ...Array.from({ length: 20 }, () => 'TOOL_CALL: {"tool":"read_file","input":{"path":"a"}}'),
-  ]);
+  const stub = new StubBackend(
+    Array.from({ length: 20 }, () => 'TOOL_CALL: {"tool":"read_file","input":{"path":"a"}}'),
+  );
   const loop = new ToolLoop(stub, tools, lifecycle, 3);
   loop.reset();
   const answer = await inTurn(() => loop.ask("loop forever"));
   assert.equal(answer, "", "the trailing call markers are stripped");
-  assert.ok(stub.prompts.length <= 7, `bounded at ${stub.prompts.length} prompts`);
+  assert.ok(stub.prompts.length <= 5, `bounded at ${stub.prompts.length} prompts`);
 }
 
 // With no tools registered the wrapper gets out of the way entirely.

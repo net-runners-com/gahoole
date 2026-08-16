@@ -13,6 +13,7 @@ import {
 import { connectMcp } from "./mcp.js";
 import { Spinner } from "./spinner.js";
 import { bindLineOwner } from "./output.js";
+import { extractAttachments } from "./attachments.js";
 import { formatSessions, SessionStore } from "./sessions.js";
 import { HandoffStore } from "./handoff.js";
 import { banner, readVersion, statusLine, type BannerInfo } from "./banner.js";
@@ -352,7 +353,19 @@ async function main(): Promise<void> {
       }
 
       try {
-        const text = await session.run(line);
+        // A dragged-in image arrives as a path in the prompt; send it as an
+        // attachment and let the rest of the line be the question.
+        const { paths, prompt } = extractAttachments(line);
+        if (paths.length) {
+          console.log(
+            `\x1b[2m  attaching ${paths.length} image${paths.length > 1 ? "s" : ""}\x1b[0m`,
+          );
+        }
+        const text = await session.run(
+          prompt || "この画像について説明してください。",
+          undefined,
+          paths,
+        );
         console.log(`\n${text}\n`);
       } catch (e) {
         // StopFailure already fired; a failed turn does not end the session.

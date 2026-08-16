@@ -34,6 +34,8 @@ npm run dev            # or: npm link && gahoole
 | `npm run smoke:tools` | marker parsing, denial, iteration cap | no |
 | `npm run smoke:spinner` | frames, label changes, sharing the line | no |
 | `npm run smoke:aimode` | two real AI Mode turns, context preserved | **yes** |
+
+Measured latency, plain question, no tools: about 3.5s per turn.
 | `npm run demo` | a scripted run through every scope, printing the audit trail | local only |
 
 None of them need an API key.
@@ -153,6 +155,21 @@ The model is pluggable, and the two options are not equivalent.
 
 Select with `GAHOOLE_BACKEND=api`. Both plug into `Session.run()`, so the
 lifecycle, hooks, session management and handoff are identical either way.
+
+### Images
+
+Drag an image into the terminal and ask about it. The path is pulled out of
+the line, sent as an attachment, and the rest of the line becomes the question:
+
+```
+› '/Users/me/Desktop/screenshot.png' これ何が写ってる？
+  attaching 1 image
+```
+
+A path only counts if the file exists and has an image extension, so a
+sentence that merely names a file is left alone. Attachments cannot ride on a
+search URL, so a conversation that opens with one starts from the empty AI
+Mode composer instead — still one query.
 
 ### Tool use without function calling
 

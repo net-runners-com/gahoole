@@ -15,7 +15,8 @@ import { AiModeBackend } from "./aimode.js";
  */
 export interface Backend {
   readonly name: string;
-  ask(prompt: string): Promise<string>;
+  /** `attachments` are absolute paths to local images, when the backend takes them. */
+  ask(prompt: string, attachments?: string[]): Promise<string>;
   /** Begin a new model-side conversation, when the backend has one. */
   reset?(): void;
   close?(): Promise<void>;

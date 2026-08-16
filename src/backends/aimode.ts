@@ -43,6 +43,16 @@ const SEND = 'button[aria-label="送信"], button[aria-label="Send"]';
 
 const CONVERSATION = '[data-subtree="aimc"] [data-container-id="main-col"]';
 
+/**
+ * The file input only exists after the "add files and tools" button is
+ * clicked, and two appear: one restricted to images, one that takes anything.
+ */
+const ADD_FILES = 'button[aria-label="ファイルとツールを追加"], button[aria-label="Add files and tools"]';
+const IMAGE_INPUT = 'input[type=file][accept*="image/"]';
+
+/** AI Mode with no query: the composer, ready for an attachment. */
+const LANDING = "https://www.google.com/search?udm=50&aep=1&source=hp";
+
 export class AiModeRateLimitError extends Error {
   /** Shaped so `classifyFailure` reads it the same way it reads a 429. */
   readonly status = 429;
@@ -93,9 +103,42 @@ export class AiModeBackend {
     return "google-ai-mode";
   }
 
+  /**
+   * Chromium refuses to open a profile that still carries a SingletonLock, and
+   * a hard kill leaves one behind. The lock is a symlink naming host-pid, so a
+   * lock whose process is gone is stale and safe to clear — which beats
+   * greeting the user with "profile is already in use" after a crash.
+   */
+  #clearStaleLock(): void {
+    const lock = path.join(PROFILE_DIR, "SingletonLock");
+    let target: string;
+    try {
+      target = fs.readlinkSync(lock);
+    } catch {
+      return; // no lock, or not a symlink
+    }
+    const pid = Number(target.split("-").pop());
+    if (Number.isFinite(pid) && pid > 0) {
+      try {
+        process.kill(pid, 0); // still running — leave it alone
+        return;
+      } catch {
+        /* gone */
+      }
+    }
+    for (const f of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) {
+      try {
+        fs.unlinkSync(path.join(PROFILE_DIR, f));
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+
   async #ensure(): Promise<any> {
     if (this.#page) return this.#page;
     fs.mkdirSync(PROFILE_DIR, { recursive: true });
+    this.#clearStaleLock();
     const ctx = (await launchPersistentContext({
       headless: !this.opts.headed,
       userDataDir: PROFILE_DIR,
@@ -140,8 +183,15 @@ export class AiModeBackend {
     }, CONVERSATION)) as string;
   }
 
-  /** Wait until the answer stops growing, or give up. */
-  async #settle(quietMs = 2500): Promise<void> {
+  /**
+   * Wait until the answer stops growing.
+   *
+   * The quiet window is the whole tail latency of a turn — the answer is
+   * complete well before the timer expires, and every extra millisecond here
+   * is felt on every question. 1200ms of no growth, sampled every 200ms, was
+   * the shortest that did not truncate answers in testing.
+   */
+  async #settle(quietMs = 1200): Promise<void> {
     const page = await this.#ensure();
     const deadline = Date.now() + (this.opts.timeoutMs ?? 90_000);
     let last = -1;
@@ -154,7 +204,17 @@ export class AiModeBackend {
       } else if (Date.now() - lastChange >= quietMs) {
         return;
       }
-      await page.waitForTimeout(400);
+      await page.waitForTimeout(200);
+    }
+  }
+
+  /** Wait for the page to start producing, rather than sleeping a fixed time. */
+  async #waitForGrowth(from: number, capMs = 8000): Promise<void> {
+    const page = await this.#ensure();
+    const deadline = Date.now() + capMs;
+    while (Date.now() < deadline) {
+      if ((await this.#conversation()).length !== from) return;
+      await page.waitForTimeout(150);
     }
   }
 
@@ -163,8 +223,37 @@ export class AiModeBackend {
    * rest continue it, so the model keeps its own context in the page and this
    * only has to carry the prompt.
    */
-  async ask(prompt: string): Promise<string> {
+  /**
+   * Attach files to the composer. They ride on the next message rather than
+   * being sent on their own, which is how the page treats them too.
+   */
+  async #attach(paths: string[]): Promise<void> {
     const page = await this.#ensure();
+    await page.locator(ADD_FILES).first().click();
+    await page.waitForTimeout(400);
+    const input = page.locator(IMAGE_INPUT).first();
+    await input.setInputFiles(paths);
+    // The thumbnail has to render before the composer will send.
+    await page.waitForTimeout(1500);
+  }
+
+  async ask(prompt: string, attachments: string[] = []): Promise<string> {
+    const page = await this.#ensure();
+
+    // An attachment cannot ride on a search URL, so a conversation that starts
+    // with one opens the empty AI Mode composer instead and sends from there.
+    if (!this.#started && attachments.length > 0) {
+      await page.goto(`${LANDING}&hl=${this.opts.hl ?? "ja"}`, {
+        waitUntil: "domcontentloaded",
+        timeout: this.opts.timeoutMs ?? 90_000,
+      });
+      await page.waitForTimeout(2500);
+      this.#started = true;
+      await this.#attach(attachments);
+      return this.#send(prompt);
+    }
+
+    if (attachments.length > 0) await this.#attach(attachments);
 
     if (!this.#started) {
       await page.goto(
@@ -174,23 +263,35 @@ export class AiModeBackend {
         { waitUntil: "domcontentloaded", timeout: this.opts.timeoutMs ?? 90_000 },
       );
       this.#started = true;
-    } else {
-      // fill() sets the value without the input event Google's send handler
-      // listens for, and type() sends one keystroke at a time — which times
-      // out on anything longer than a sentence. insertText fires a single
-      // real input event with the whole string.
-      const box = page.locator(COMPOSER).last();
-      await box.click();
-      const text = prompt.slice(0, COMPOSER_MAX);
-      await page.keyboard.insertText(text);
-      await page.waitForTimeout(300);
-      const send = page.locator(SEND).first();
-      if (await send.count()) await send.click();
-      else await box.press("Enter");
-      await page.waitForTimeout(1500);
+      await this.#settle();
+      return this.#read();
     }
 
+    return this.#send(prompt);
+  }
+
+  /** Type into the composer, send, and read the answer back. */
+  async #send(prompt: string): Promise<string> {
+    const page = await this.#ensure();
+    // fill() sets the value without the input event Google's send handler
+    // listens for, and type() sends one keystroke at a time — which times out
+    // on anything longer than a sentence. insertText fires a single real
+    // input event with the whole string.
+    const box = page.locator(COMPOSER).last();
+    await box.click();
+    await page.keyboard.insertText(prompt.slice(0, COMPOSER_MAX));
+    await page.waitForTimeout(250);
+    const before = this.#seen.length;
+    const send = page.locator(SEND).first();
+    if (await send.count()) await send.click();
+    else await box.press("Enter");
+    await this.#waitForGrowth(before);
     await this.#settle();
+    return this.#read();
+  }
+
+  /** The part of the conversation that was not there before this turn. */
+  async #read(): Promise<string> {
 
     // Each turn appends its own conversation container, so the answer is the
     // tail that was not there before.

@@ -57,21 +57,24 @@ export class ToolLoop implements Backend {
     await this.inner.close?.();
   }
 
-  async ask(prompt: string): Promise<string> {
-    if (Object.keys(this.tools).length === 0) return this.inner.ask(prompt);
+  async ask(prompt: string, attachments: string[] = []): Promise<string> {
+    if (Object.keys(this.tools).length === 0)
+      return this.inner.ask(prompt, attachments);
 
     const specs = Object.entries(this.tools).map(([n, t]) => describeTool(n, t));
 
-    if (!this.#primed) {
-      // The preamble is its own turn: a model that receives instructions and a
-      // question together tends to answer the question and forget the rules.
-      await this.inner.ask(buildPreamble(specs));
-      this.#primed = true;
-    }
+    // The preamble rides on the first question rather than costing a turn of
+    // its own. It used to be sent separately, on the theory that rules and a
+    // question in one message get the question answered and the rules
+    // forgotten — but the per-question reminder is what actually holds the
+    // behaviour, and the extra round trip doubled the latency of the first
+    // question in every session.
+    const head = this.#primed
+      ? buildReminder(specs)
+      : `${buildPreamble(specs)}\n\n${buildReminder(specs)}`;
+    this.#primed = true;
 
-    // ...and the rule is restated with the question, because several turns
-    // later the preamble no longer competes with the model's own instincts.
-    let answer = await this.inner.ask(`${buildReminder(specs)}\n\n${prompt}`);
+    let answer = await this.inner.ask(`${head}\n\n${prompt}`, attachments);
 
     for (let i = 0; i < this.maxIterations; i++) {
       const calls = parseCalls(answer);
