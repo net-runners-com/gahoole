@@ -66,13 +66,24 @@ export function describeTool(name: string, tool: unknown): ToolSpec {
   };
 }
 
+/**
+ * Wording matters more than length here, and not in the direction you would
+ * guess. A terser version of this — same rules, led by a bare
+ * `{"tool":"<name>","input":{...}}` template — was refused outright by AI
+ * Mode with "この検索に対しては回答することができなかったようです", through
+ * both the search URL and the composer, while a plain question from the same
+ * profile answered normally. Prose that explains what the program is, with a
+ * concrete example instead of an angle-bracket template, is answered. Only
+ * tool descriptions are trimmed for length: the first clause carries the
+ * signal, the rest is detail the model does not need in order to choose.
+ */
 export function buildPreamble(tools: ToolSpec[]): string {
   if (tools.length === 0) return "";
   const list = tools
-    .map(
-      (t) =>
-        `- ${t.name}(${t.params.join(", ")})${t.description ? ` — ${t.description}` : ""}`,
-    )
+    .map((t) => {
+      const gist = t.description.split(/(?<=\.)\s/)[0] ?? "";
+      return `- ${t.name}(${t.params.join(", ")}) ${gist}`.trim();
+    })
     .join("\n");
 
   return [
@@ -81,17 +92,13 @@ export function buildPreamble(tools: ToolSpec[]): string {
     "Available tools:",
     list,
     "",
-    "To use one, write a line exactly like this, on its own line, with nothing else on it:",
-    `${CALL_PREFIX} {"tool":"<name>","input":{ ... }}`,
+    "To use one, write a line on its own that starts with the marker below,",
+    "followed by JSON naming the tool and its input:",
+    `${CALL_PREFIX} {"tool":"read_file","input":{"path":"README.md"}}`,
     "",
-    "Rules:",
-    "- Write the line as plain text. Do not put it in a code block, table, or quote.",
-    "- The JSON must be valid and on one line.",
-    "- Stop after the tool call line and wait. Do not guess what the result will be.",
-    `- I will reply with a line starting ${RESULT_PREFIX} containing the output, and then you continue.`,
-    "- If no tool is needed, just answer normally and never mention this protocol.",
-    "",
-    "Acknowledge with one short sentence, then wait for my question.",
+    "Write it as plain text, not in a code block, and stop there and wait.",
+    `I will reply with a ${RESULT_PREFIX} line containing the output, and then`,
+    "you continue. If no tool is needed, just answer normally.",
   ].join("\n");
 }
 

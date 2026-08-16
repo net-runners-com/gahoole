@@ -9,6 +9,7 @@ import { ToolLoop } from "./tool-loop.js";
 import type { Backend } from "./backends/index.js";
 import { turnStore, type TurnContext } from "./turn-context.js";
 import {
+  CALL_PREFIX,
   buildPreamble,
   describeTool,
   formatResult,
@@ -46,7 +47,14 @@ const huge = formatResult("read_file", { output: { content: "x".repeat(20_000) }
 assert.ok(huge.length < 8_192, `result fits the composer (${huge.length})`);
 assert.ok(huge.includes("[truncated]"));
 
-assert.ok(buildPreamble([{ name: "t", description: "d", params: ["a"] }]).includes("t(a)"));
+{
+  // Descriptions are trimmed to their first clause; the surrounding prose is
+  // load-bearing and stays (see the note on buildPreamble).
+  const pre = buildPreamble([{ name: "t", description: "First. Second.", params: ["a"] }]);
+  assert.ok(pre.includes("t(a) First."), "the name, params and first clause");
+  assert.ok(!pre.includes("Second."), "and nothing past it");
+  assert.ok(pre.includes(CALL_PREFIX), "and the marker, with a concrete example");
+}
 assert.equal(buildPreamble([]), "", "no tools means no preamble");
 
 // --- the loop ---------------------------------------------------------------

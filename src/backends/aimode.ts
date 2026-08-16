@@ -53,6 +53,13 @@ const IMAGE_INPUT = 'input[type=file][accept*="image/"]';
 /** AI Mode with no query: the composer, ready for an attachment. */
 const LANDING = "https://www.google.com/search?udm=50&aep=1&source=hp";
 
+/**
+ * Longest prompt still sent as `?q=`. Measured: a ~1000-character query
+ * returns a page with no conversation container at all, and the turn fails
+ * with "AI Mode returned nothing".
+ */
+const URL_MAX = 400;
+
 export class AiModeRateLimitError extends Error {
   /** Shaped so `classifyFailure` reads it the same way it reads a 429. */
   readonly status = 429;
@@ -240,9 +247,12 @@ export class AiModeBackend {
   async ask(prompt: string, attachments: string[] = []): Promise<string> {
     const page = await this.#ensure();
 
-    // An attachment cannot ride on a search URL, so a conversation that starts
-    // with one opens the empty AI Mode composer instead and sends from there.
-    if (!this.#started && attachments.length > 0) {
+    // A search URL is not a general input channel: an attachment cannot ride
+    // on one, and a long prompt silently fails to produce a conversation at
+    // all — which is what the tool preamble did, since it opens every session
+    // with roughly a thousand characters. Both cases start from the empty AI
+    // Mode composer instead, which costs the same single query.
+    if (!this.#started && (attachments.length > 0 || prompt.length > URL_MAX)) {
       await page.goto(`${LANDING}&hl=${this.opts.hl ?? "ja"}`, {
         waitUntil: "domcontentloaded",
         timeout: this.opts.timeoutMs ?? 90_000,
@@ -273,18 +283,33 @@ export class AiModeBackend {
   /** Type into the composer, send, and read the answer back. */
   async #send(prompt: string): Promise<string> {
     const page = await this.#ensure();
+    const text = prompt.slice(0, COMPOSER_MAX);
+    const box = page.locator(COMPOSER).last();
+
     // fill() sets the value without the input event Google's send handler
     // listens for, and type() sends one keystroke at a time — which times out
     // on anything longer than a sentence. insertText fires a single real
     // input event with the whole string.
-    const box = page.locator(COMPOSER).last();
     await box.click();
-    await page.keyboard.insertText(prompt.slice(0, COMPOSER_MAX));
-    await page.waitForTimeout(250);
+    await page.keyboard.insertText(text);
+
+    // The click does not always land the focus, and text inserted into
+    // nothing leaves the send button disabled — which then times out looking
+    // "not stable" rather than saying the composer is empty. Check, and fall
+    // back to filling the field and announcing it ourselves.
+    if ((await box.inputValue()).length === 0) {
+      await box.fill(text);
+      await box.dispatchEvent("input");
+    }
+
     const before = this.#seen.length;
     const send = page.locator(SEND).first();
-    if (await send.count()) await send.click();
-    else await box.press("Enter");
+    try {
+      await send.click({ timeout: 5000 });
+    } catch {
+      // Enter submits too, and works even when the button is mid-transition.
+      await box.press("Enter");
+    }
     await this.#waitForGrowth(before);
     await this.#settle();
     return this.#read();

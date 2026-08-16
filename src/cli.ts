@@ -10,6 +10,8 @@ import {
   registerMcpPolicy,
   registerWriteGuard,
 } from "./hooks/logging.js";
+import { registerFileGuard } from "./hooks/file-guard.js";
+import { approvalMode, registerApproval } from "./hooks/approval.js";
 import { connectMcp } from "./mcp.js";
 import { Spinner } from "./spinner.js";
 import { bindLineOwner } from "./output.js";
@@ -63,6 +65,9 @@ environment
   MCP_ALLOW/MCP_DENY  comma-separated MCP tool policy
   NO_COLOR            disable colour`;
 
+/** Set once the spinner exists, so a signal handler can silence it. */
+let spinnerRef: { stop(): void } | undefined;
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.includes("--help") || argv.includes("-h")) {
@@ -80,6 +85,7 @@ async function main(): Promise<void> {
   const lifecycle = new Lifecycle();
   registerJsonlLog(lifecycle);
   registerWriteGuard(lifecycle);
+  registerFileGuard(lifecycle);
 
   const opened: string[] = [];
   lifecycle.on("SessionStart", (e) => {
@@ -117,6 +123,24 @@ async function main(): Promise<void> {
   lifecycle.on("ProcessExit", async () => {
     await backend.close?.();
   });
+
+  // Ctrl-C is how a REPL is normally left, and it skips the finally below.
+  // Without this the headless browser outlives the process and holds the
+  // profile lock, so the next start fails with "profile is already in use".
+  let closing = false;
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.once(signal, () => {
+      if (closing) process.exit(130);
+      closing = true;
+      spinnerRef?.stop();
+      void backend
+        .close?.()
+        .catch(() => {})
+        .finally(() => process.exit(130));
+      // Do not wait forever on a browser that will not close.
+      setTimeout(() => process.exit(130), 3000).unref();
+    });
+  }
   // Each gahoole session gets its own model-side conversation.
   lifecycle.on("SessionStart", () => {
     backend.reset?.();
@@ -192,7 +216,9 @@ async function main(): Promise<void> {
   // The spinner is driven entirely by the lifecycle, so its label is whatever
   // is actually happening rather than a guess made at the call site.
   const spinner = new Spinner();
+  spinnerRef = spinner;
   bindLineOwner(spinner);
+
   lifecycle
     .on("UserPromptSubmit", () => spinner.start("thinking"))
     .on("PreToolUse", (e) => spinner.label(`running ${e.toolName}`))
@@ -211,6 +237,17 @@ async function main(): Promise<void> {
     ? readline.createInterface({ input: stdin, output: stdout })
     : undefined;
   const batchInput = interactive ? "" : readFileSync(0, "utf8");
+
+  // Approval runs mid-turn, so the spinner has to get out of the way for the
+  // question and come back after. Without a terminal there is no one to ask,
+  // and the hook declines rather than guessing.
+  if (rl) {
+    const ask = rl.question.bind(rl);
+    registerApproval(lifecycle, ask, {
+      pause: () => spinner.stop(),
+      resume: () => spinner.start("thinking"),
+    });
+  }
   if (interactive) {
     console.log(`\n${DIM}/help for commands, /exit to leave${RESET}\n`);
   }

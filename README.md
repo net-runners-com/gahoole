@@ -156,6 +156,41 @@ The model is pluggable, and the two options are not equivalent.
 Select with `GAHOOLE_BACKEND=api`. Both plug into `Session.run()`, so the
 lifecycle, hooks, session management and handoff are identical either way.
 
+### Local file tools
+
+| Tool | What it does |
+|---|---|
+| `read_file(path, offset, limit)` | Read a file, optionally a range of lines |
+| `write_file(path, content)` | Create or replace a file |
+| `edit_file(path, old, new)` | Replace an exact string that appears once |
+| `list_files(dir, pattern, depth)` | Find what exists before reading it |
+| `write_note(name, body)` | The agent's own scratch space under `data/notes` |
+
+Three layers stand between the model and the disk, and they are deliberately
+not the same check written three times:
+
+1. **The tools** resolve every path against the project root and refuse to
+   leave it. `resolveInRoot` is the only way a string becomes a path, so
+   there is one place to get right rather than one per tool.
+2. **`registerFileGuard`** refuses with a reason the model reads — outside the
+   root, `.env` and `.git` and key files (on read as well as write, since a
+   model that can read a secret can repeat it), writes into generated trees,
+   and absurd payloads.
+3. **Approval** asks a human before anything is written. `GAHOOLE_APPROVE=ask`
+   is the default; `allow` skips it, `deny` refuses outright. Reads are never
+   asked about — approving each one teaches the habit of saying yes, which is
+   the failure this exists to prevent. Answering `a` allows that tool for the
+   rest of the session.
+
+```
+› tmp-live.txt を作って hello と書いて
+
+  write tmp-live.txt (5 chars)
+  allow? [y/N/a] y
+  ├ write_file {"path":"tmp-live.txt","content":"hello"}
+  └ write_file ok · 8ms
+```
+
 ### Images
 
 Drag an image into the terminal and ask about it. The path is pulled out of
