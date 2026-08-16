@@ -466,5 +466,103 @@ assert.equal(parsePlan(Array.from({ length: 40 }, (_, i) => `${i}. step number $
   delete process.env.GAHOOLE_MEMORY_DIR;
 }
 
+// ===========================================================================
+// invariants that hold between modules
+// ===========================================================================
+{
+  const { COMPOSER_MAX } = await import("./backends/aimode.js");
+  const { TYPES, OBSERVE_PROMPT, OBS_PREFIX, parseObservations } = await import(
+    "./observations.js"
+  );
+
+  // A message of results has to fit the composer with room for the sentence
+  // that follows it. The composer silently drops the rest, and what is at the
+  // end is the instruction — so this is the invariant that keeps the model
+  // from being handed output with nothing asked of it.
+  const worst = formatResults(
+    Array.from({ length: 6 }, () => ({
+      tool: "read_file",
+      outcome: { output: { content: "x".repeat(50_000) } },
+    })),
+  ).join("\n");
+  assert.ok(
+    worst.length + 200 < COMPOSER_MAX,
+    `results leave room for the instruction (${worst.length} of ${COMPOSER_MAX})`,
+  );
+
+  // Every type the model is offered is a type the parser accepts, and every
+  // type the parser accepts is one the model is offered. Either half missing
+  // means notes are asked for and then dropped, silently.
+  for (const t of TYPES) {
+    assert.ok(
+      OBSERVE_PROMPT.includes(`${OBS_PREFIX} ${t}`),
+      `the prompt offers ${t}`,
+    );
+  }
+  const offered = [...OBSERVE_PROMPT.matchAll(new RegExp(`^${OBS_PREFIX} (\\w+)`, "gm"))].map(
+    (m) => m[1]!,
+  );
+  for (const t of offered) {
+    assert.ok(TYPES.includes(t as never), `the parser accepts ${t}`);
+  }
+  // And the prompt's own examples parse, which is the cheapest way to know
+  // the shape it describes is the shape it asks for.
+  assert.equal(parseObservations(OBSERVE_PROMPT).length, TYPES.length);
+}
+
+// ===========================================================================
+// the benchmark's own checks
+// ===========================================================================
+//
+// Twice now a task has been marked failed because the check was stricter than
+// the prompt: sorted numbers written with commas, and a fix written without
+// spaces around the plus. A check that rejects a correct answer measures the
+// person who wrote it.
+{
+  const { TASKS } = await import("./bench-tasks.js");
+  const files = new Map<string, string>();
+  const read = (f: string) => files.get(f) ?? "";
+  const find = (id: string) => {
+    const t = TASKS.find((x) => x.id === id);
+    assert.ok(t, id);
+    return t;
+  };
+
+  assert.ok(TASKS.every((t) => t.prompt.length > 10 && t.steps >= 1));
+  assert.equal(new Set(TASKS.map((t) => t.id)).size, TASKS.length, "ids are distinct");
+
+  // Reasoning: the number, however it is written around.
+  assert.ok(find("reason/ages").check("12", read));
+  assert.ok(find("reason/ages").check("ボブは12歳です。", read));
+  assert.ok(!find("reason/ages").check("ボブは11歳です。", read));
+
+  // A correct answer in any reasonable shape.
+  files.set("sorted.txt", "1\n3\n5\n9\n");
+  assert.ok(find("auto/pipeline").check("", read), "one per line");
+  files.set("sorted.txt", "1, 3, 5, 9");
+  assert.ok(find("auto/pipeline").check("", read), "commas, which the prompt never forbade");
+  files.set("sorted.txt", "[1,3,5,9]");
+  assert.ok(find("auto/pipeline").check("", read), "or a printed array");
+  files.set("sorted.txt", "9\n5\n3\n1");
+  assert.ok(!find("auto/pipeline").check("", read), "but not unsorted");
+
+  files.set("add.js", "function add(a, b) { return a + b; }");
+  assert.ok(find("solve/fix").check("", read));
+  files.set("add.js", "function add(a,b){return a+b}");
+  assert.ok(find("solve/fix").check("", read), "spacing is the author's business");
+  files.set("add.js", "function add(a, b) { return a - b; }");
+  assert.ok(!find("solve/fix").check("", read), "but the bug is still the bug");
+
+  files.set("greet.txt", "hello gahoole\n");
+  assert.ok(find("solve/write").check("", read), "trailing newline is not a failure");
+  files.set("greet.txt", "Hello Gahoole");
+  assert.ok(!find("solve/write").check("", read), '"exactly" was asked for');
+
+  files.set("count.txt", " 3 \n");
+  assert.ok(find("auto/inspect").check("", read));
+  files.set("count.txt", "three");
+  assert.ok(!find("auto/inspect").check("", read));
+}
+
 console.log("ok — protocol: calls, bodies, budgets, plans, verdicts");
 process.exit(0);

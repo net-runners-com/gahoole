@@ -67,8 +67,13 @@ export const inProject = (...parts: string[]): string =>
 export const inRepo = (...parts: string[]): string =>
   path.resolve(".gahoole", ...parts);
 
-/** Where the state used to live, in the order it lived there. */
-const LEGACY = [path.resolve("data"), path.resolve(".gahoole")];
+/**
+ * Where the state used to live, in the order it lived there. Resolved when
+ * asked rather than when this module loads: everything else here reads
+ * `process.cwd()` at call time, and one constant that does not is a constant
+ * that is right until something changes directory.
+ */
+const legacy = (): string[] => [path.resolve("data"), path.resolve(".gahoole")];
 
 /**
  * Move a `data/` directory from before the rename, once.
@@ -82,7 +87,7 @@ export function migrate(): string | undefined {
   const to = projectDir();
   if (fs.existsSync(to)) return undefined;
 
-  const from = LEGACY.find(
+  const from = legacy().find(
     (d) => fs.existsSync(d) && fs.readdirSync(d).some((f) => f !== "settings.json"),
   );
   if (!from) return undefined;

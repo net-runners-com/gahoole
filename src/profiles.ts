@@ -75,17 +75,24 @@ export const PROFILES: Profile[] = [
     aliases: ["reason", "oracle"],
     summary: "推論 — the oracle speaks and does nothing else; no tools at all",
     brief: [
-      "For this session, work problems out rather than looking things up.",
+      "For this session you have no tools at all. You cannot read a file, run a",
+      "program, or start an interpreter. Nothing you describe doing will happen.",
       "",
-      "Set out the steps in order, each one following from the last, and put the",
-      "final answer on its own line at the end. If the answer is a number, give",
-      "the number. If the question contains everything needed to answer it, do",
-      "not search the web — use what is in front of you.",
+      // Said plainly because the omission was measured: asked to count files
+      // and write the number down, this profile announced it would "use a
+      // Python interpreter to count them" and then stopped. It had no tools
+      // and had never been told so — a profile with an empty tool set gets no
+      // tool preamble, so the only place its situation can be stated is here.
+      "So: work problems out rather than looking things up. Set out the steps in",
+      "order, each one following from the last, and put the final answer on its",
+      "own line at the end. If the answer is a number, give the number. Do not",
+      "search the web — use what is in front of you.",
       "",
-      "If a question cannot be answered from what you were given, say what is",
-      "missing rather than guessing at it.",
+      "If part of what is asked needs a tool, say which part and that you cannot",
+      "do it, and answer the rest. Never describe using something you do not",
+      "have.",
     ].join("\n"),
-    hint: "[Reason it through step by step, then give the answer on its own line. Do not search the web.]",
+    hint: "[No tools this session — reason it out and answer. If something needs a tool, say so plainly instead of describing it. Do not search the web.]",
     tools: "none",
     rounds: 1,
     steps: 3,

@@ -155,6 +155,13 @@ const CHROME = [
   /AI は不正確な情報を表示することがある[\s\S]*$/,
   /AI responses may include mistakes[\s\S]*$/i,
   /^\s*すべて表示\s*$/gm,
+  // The disclaimer under a rendered code block, which arrives once per block
+  // and is not part of the answer.
+  /^\s*コードは注意してご使用ください。?\s*$/gm,
+  /^\s*Use code with caution\.?\s*$/gim,
+  // The bare language label the page prints above a block; the fence carries
+  // it already.
+  /^\s*(?:text|bash|sh|python|javascript|typescript|json|cpp|c\+\+)\s*$(?=\n```)/gm,
 ];
 
 function stripChrome(text: string): string {

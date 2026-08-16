@@ -81,15 +81,15 @@ for (const kept of ["read_file", "list_files", "search_files"]) {
   loop.use(p("pythia"), toolsFor(p("pythia"), all));
   await loop.ask("2+2は？");
   const first = stub.seen[0]!;
-  assert.ok(first.includes("work problems out"), "the brief is sent");
+  assert.ok(first.includes("no tools at all"), "the brief is sent");
   assert.ok(first.includes("2+2は？"), "along with the question");
   assert.ok(!first.includes("TOOL_CALL:"), "and no tool protocol");
 
   // The long brief is sent once; the one-line hint rides on every question.
   await loop.ask("3+3は？");
   const second = stub.seen[1]!;
-  assert.ok(!second.includes("work problems out"), "the brief is not repeated");
-  assert.ok(second.includes("Reason it through"), "the hint is");
+  assert.ok(!second.includes("no tools at all"), "the brief is not repeated");
+  assert.ok(second.includes("No tools this session"), "the hint is");
 }
 
 {

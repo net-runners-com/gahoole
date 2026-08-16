@@ -29,14 +29,26 @@ npm run dev            # or: npm link && gahoole
 | Test | Covers | Network |
 |---|---|---|
 | `npm run smoke` | hook dispatch, PreToolUse deny, Pre/Post pairing, session store | no |
-| `npm run smoke:mcp` | MCP connect, namespacing, policy denial | local only |
+| `npm run smoke:protocol` | calls, bodies, result budgets, plans, verdicts, the benchmark's own checks | no |
+| `npm run smoke:tui` | printed width with CJK, truncation, wrapping, boxes square at five widths, banner | no |
+| `npm run smoke:paths` | the slug, one directory per project, settings precedence, the move out of `data/` | no |
+| `npm run smoke:core` | backend selection, turn context, hook precedence, audit log, MCP policy, failure classes | no |
+| `npm run smoke:tools` | marker parsing, denial, iteration cap, batching, spin detection | no |
+| `npm run smoke:files` | the file tools, the guard, approval | no |
+| `npm run smoke:trust` | the folder check, inheritance, the record outside the project | no |
+| `npm run smoke:profile` | tool sets per profile, brief once and hint always | no |
+| `npm run smoke:auto` | plan, steps, discovery, budget, stuck, no-plan | no |
 | `npm run smoke:handoff` | failure classification, digest without a model, carry-over | no |
-| `npm run smoke:tools` | marker parsing, denial, iteration cap | no |
 | `npm run smoke:spinner` | frames, label changes, sharing the line | no |
+| `npm run smoke:ratelimit` | rotation policy, bounded retries | no |
+| `npm run smoke:cli` | the CLI end to end: commands, profiles, approval, sessions, trust, migration | no |
+| `npm run smoke:dom` | reading an answer out of real Chromium, against a fixture | local only |
+| `npm run smoke:mcp` | MCP connect, namespacing, policy denial | local only |
 | `npm run smoke:aimode` | two real AI Mode turns, context preserved | **yes** |
+| `npm run canary` | the selectors still resolve and the page still answers | **yes** |
 
-Measured latency, plain question, no tools: about 3.5s per turn.
-| `npm run demo` | a scripted run through every scope, printing the audit trail | local only |
+`npm run smoke:offline` runs everything that needs nothing; `npm run smoke:all`
+adds the browser. CI runs both on every push.
 
 None of them need an API key.
 

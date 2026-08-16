@@ -91,17 +91,31 @@ export function renderBanner(
     return `${c(BOLD, "gahoole")} ${c(DIM, `v${info.version}`)}\n`;
   }
 
-  const toolLine =
-    info.tools === 0
-      ? "no tools"
-      : `${info.tools} tools${info.mcpServers ? ` · ${info.mcpServers} mcp` : ""}`;
+  // Ordered by what a person needs in order to predict what the agent will
+  // do, because a narrow terminal truncates the end of the line: the model,
+  // then how it has been told to work, then what it can reach. At 40 columns
+  // this used to read "…· 8 tools · 1 mcp ·…" with the profile cut off, which
+  // is the one piece of it you cannot infer from anything else on screen.
+  const toolLine = [
+    info.profile,
+    info.tools === 0 ? "no tools" : `${info.tools} tools`,
+    info.mcpServers ? `${info.mcpServers} mcp` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
+  // Two lines rather than one. The panel's left column is about a third of the
+  // terminal, and "google-ai-mode · athena · 8 tools · 1 mcp" does not fit in
+  // it at 80 columns — it was truncated, and what fell off the end was the
+  // profile and the tool count, which are the two things on the panel you
+  // cannot work out from anywhere else.
   const left = [
     c(BOLD, `Welcome back ${user}!`),
     "",
     ...MARK.map((row) => c(AMBER, row)),
     "",
-    c(DIM, `${info.model} · ${toolLine}${info.profile ? ` · ${info.profile}` : ""}`),
+    c(DIM, info.model),
+    c(DIM, toolLine),
     c(DIM, shortenPath(info.cwd)),
     c(
       DIM,
