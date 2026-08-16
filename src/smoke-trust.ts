@@ -119,6 +119,40 @@ try {
     configurable: true,
   });
 
+  // --- a yes clears the panel away, a no leaves the screen alone -------------
+  {
+    const written: string[] = [];
+    const realWrite = process.stdout.write.bind(process.stdout);
+    const wasTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+    (process.stdout as { write: unknown }).write = ((s: string) => {
+      written.push(String(s));
+      return true;
+    }) as typeof process.stdout.write;
+
+    const yesDir = path.join(HOME, "work", "cleared");
+    const noDir = path.join(HOME, "work", "kept");
+    fs.mkdirSync(yesDir, { recursive: true });
+    fs.mkdirSync(noDir, { recursive: true });
+    await ensureTrusted(yesDir, { ask: async () => true });
+    const afterYes = written.join("");
+    written.length = 0;
+    await ensureTrusted(noDir, { ask: async () => false });
+    const afterNo = written.join("");
+    written.length = 0;
+    // Already trusted: nothing was printed, so nothing is wiped.
+    await ensureTrusted(yesDir, { ask: async () => true });
+    const afterKnown = written.join("");
+
+    (process.stdout as { write: unknown }).write = realWrite;
+    Object.defineProperty(process.stdout, "isTTY", { value: wasTTY, configurable: true });
+
+    assert.ok(afterYes.includes("\x1b[2J"), "a yes clears the screen");
+    assert.ok(afterYes.includes("\x1b[3J"), "and the scrollback with it");
+    assert.ok(!afterNo.includes("\x1b[2J"), "a no leaves the reason on screen");
+    assert.equal(afterKnown, "", "a folder already trusted neither prints nor clears");
+  }
+
   // --- the panel text wraps to the terminal, measured in printed cells --------
   const lines = wrap("gahoole は このフォルダの mcp.json を読み込みます そして 実行します", 24);
   assert.ok(lines.every((l) => width(l) <= 24), "CJK counts as two cells");

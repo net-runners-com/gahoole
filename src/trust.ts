@@ -208,8 +208,15 @@ export async function ensureTrusted(
   }
 
   const yes = await ask(dir);
-  if (yes) trust(dir);
-  return yes;
+  if (!yes) return false;
+  trust(dir);
+  // The panel has done its job once it is answered, and leaving it above the
+  // banner starts the session halfway down the screen. Only after a question
+  // was actually asked: an already-trusted folder and --trust print nothing,
+  // so there is nothing to clear and wiping the user's terminal would be rude.
+  // \x1b[3J takes the scrollback too, which \x1b[2J on its own does not.
+  if (stdout.isTTY) stdout.write("\x1b[2J\x1b[3J\x1b[H");
+  return true;
 }
 
 async function defaultAsk(dir: string): Promise<boolean> {
