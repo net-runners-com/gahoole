@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Gahoole \u2014 a local agent with a Claude Code-shaped lifecycle: process, session, turn, tool call.",
+  "description": "Gahoole — a local agent with a Claude Code-shaped lifecycle: process, session, turn, tool call.",
   "scripts": {
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
@@ -12,13 +12,16 @@
     "demo": "tsx src/demo.ts",
     "smoke:handoff": "tsx src/smoke-handoff.ts",
     "build": "tsc",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "smoke:aimode": "tsx src/smoke-aimode.ts"
   },
   "dependencies": {
     "@mastra/core": "^1.59.0",
     "@mastra/libsql": "^1.20.0",
     "@mastra/mcp": "^1.16.0",
     "@mastra/memory": "^1.26.2",
+    "cloakbrowser": "^0.5.7",
+    "playwright-core": "^1.62.1",
     "zod": "^3.25.0"
   },
   "devDependencies": {

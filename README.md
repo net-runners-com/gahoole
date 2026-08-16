@@ -26,9 +26,15 @@ cp .env.example .env   # set ANTHROPIC_API_KEY
 npm run dev            # or: npm link && gahoole
 ```
 
-`npm run smoke` runs the offline checks (hook dispatch, PreToolUse deny,
-Pre/Post pairing, libSQL thread persistence) and `npm run smoke:mcp` checks the
-MCP path end to end. Neither needs an API key.
+| Test | Covers | Network |
+|---|---|---|
+| `npm run smoke` | hook dispatch, PreToolUse deny, Pre/Post pairing, session store | no |
+| `npm run smoke:mcp` | MCP connect, namespacing, policy denial | local only |
+| `npm run smoke:handoff` | failure classification, digest without a model, carry-over | no |
+| `npm run smoke:aimode` | two real AI Mode turns, context preserved | **yes** |
+| `npm run demo` | a scripted run through every scope, printing the audit trail | local only |
+
+None of them need an API key.
 
 ## Where each scope lives
 
@@ -116,6 +122,9 @@ session boundary happened.
 
 ## Storage
 
+The browser profile for the `ai-mode` backend lives in `data/browser-profile`;
+deleting it starts over with fresh cookies.
+
 Messages, thread metadata, traces, and eval scores all live in
 `data/gahoole.db` (libSQL / SQLite-compatible). One file, no server, survives
 restarts. The lifecycle's own audit log is `data/events.jsonl`.
@@ -124,11 +133,51 @@ This will not work on a serverless host with an ephemeral filesystem. Swapping
 `LibSQLStore` for Turso or Postgres in `src/agent.ts` is the only change needed
 if that becomes relevant.
 
-## Model
+## Backends
 
-`anthropic/claude-opus-5`, resolved by Mastra from `ANTHROPIC_API_KEY`.
-Set in `MODEL` (`src/agent.ts`); `/compact` uses the same model for its
-summarization call.
+The model is pluggable, and the two options are not equivalent.
+
+| | `ai-mode` (default) | `api` |
+|---|---|---|
+| What it is | Google AI Mode (`udm=50`) driven through a stealth Chromium | Mastra agent on `anthropic/claude-opus-5` |
+| Key | none | `ANTHROPIC_API_KEY` |
+| Cost | none | per token |
+| Tool calling | **no** | yes |
+| Rate limit | ~77–100 queries per 10–13 min, *silent* | 429 with `retry-after` |
+
+Select with `GAHOOLE_BACKEND=api`. Both plug into `Session.run()`, so the
+lifecycle, hooks, session management and handoff are identical either way.
+
+**AI Mode cannot call tools.** It has no function-calling surface — it returns
+prose. The local and MCP tools are still registered and their hooks still fire
+for anything the program calls itself, but the model never drives them. Use the
+`api` backend if tool use is the point.
+
+Its rate limit is the reason the handoff machinery exists: HTTP stays 200 and
+the answer is quietly replaced by a short error string, so the backend detects
+it by reading the answer and raises a 429-shaped error that the rest of the
+program already knows how to handle.
+
+`/compact` and the handoff summary both go through whichever backend is active
+(`src/summarize.ts`), so neither needs an API key. That matters for the handoff
+in particular — it exists for the case where the only available model has
+stopped answering.
+
+### Why the page and not an HTTP call
+
+AI Mode has no API, and the request the page makes cannot be replayed with a
+different question. Measured:
+
+| Request | Result |
+|---|---|
+| `/search?udm=50` with plain `fetch` | 200, 92 KB — a JS shell with no conversation container and none of the tokens (the browser gets 406 KB) |
+| A captured `/async/folif` replayed **unchanged** | 200, 774 KB — the real answer |
+| The same URL with only `q` changed | 400 |
+| The same URL with only `csui` changed | 400 |
+
+Cookies and headers are fine; the parameters are signed, and the question is
+covered by the signature. A captured request can only be replayed as itself, so
+driving the page is the only way to ask something new.
 
 ## Known limits
 

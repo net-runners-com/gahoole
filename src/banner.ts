@@ -75,7 +75,9 @@ export function renderBanner(
   const facts = [
     `v${info.version}`,
     info.model,
-    `${info.tools} tools${info.mcpServers ? ` (${info.mcpServers} mcp)` : ""}`,
+    info.tools === 0
+      ? "no tool calling"
+      : `${info.tools} tools${info.mcpServers ? ` (${info.mcpServers} mcp)` : ""}`,
     shortenPath(info.cwd),
   ].join(" · ");
 

@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Lifecycle } from "./lifecycle.js";
-import { createAgent, createMemory, MODEL } from "./agent.js";
+import { createAgent, createMemory } from "./agent.js";
 import { Session } from "./session.js";
 import { SessionStore } from "./sessions.js";
 import { classifyFailure, HandoffStore, shouldHandoff } from "./handoff.js";
@@ -54,7 +54,7 @@ const sessions = new SessionStore(memory, resourceId);
 sessions.register(lifecycle);
 const agent = createAgent(lifecycle, memory);
 
-const handoffs = new HandoffStore(memory, resourceId, MODEL);
+const handoffs = new HandoffStore(memory, resourceId);
 let captured = 0;
 handoffs.register(lifecycle, {
   turnsOf: () => session.turns,
@@ -132,11 +132,12 @@ assert.ok(
   "the new session's thread contains the carried-over context",
 );
 
-// Stage 2 really does fail here, and failing is not an error.
-await assert.rejects(
-  () => handoffs.summarize(saved),
-  "summarize throws while the model is unavailable",
-);
+// Stage 2 with no backend available: the handoff comes back untouched and
+// still pending, rather than throwing or losing the digest.
+const unchanged = await handoffs.summarize(saved);
+assert.equal(unchanged.pending, true, "still owed a summary");
+assert.equal(unchanged.summary, undefined);
+assert.equal(unchanged.digest, saved.digest, "the digest survives");
 
 await next.end("exit");
 console.log(

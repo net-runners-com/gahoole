@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Memory } from "@mastra/memory";
 import type { Lifecycle, StopFailureEvent } from "./lifecycle.js";
+import { summarizeThread } from "./summarize.js";
 
 /**
  * Carrying a conversation across a rate limit.
@@ -76,6 +77,11 @@ export function classifyFailure(error: unknown): FailureClass {
     ? Number(retryAfterRaw) * 1000 || undefined
     : undefined;
 
+  // AI Mode never returns a 429 — it returns 200 with the answer replaced by
+  // an error string, which the backend turns into this.
+  if (/aimoderatelimit/.test(message)) {
+    return { kind: "rate_limit", status };
+  }
   if (status === 429 || /rate.?limit|too many requests/.test(message)) {
     return { kind: "rate_limit", status, retryAfterMs };
   }
@@ -105,8 +111,6 @@ export class HandoffStore {
   constructor(
     private readonly memory: Memory,
     private readonly resourceId: string,
-    /** Model id for stage 2; omitted disables summarization entirely. */
-    private readonly model?: string,
   ) {
     fs.mkdirSync(DIR, { recursive: true });
   }
@@ -204,18 +208,12 @@ export class HandoffStore {
    * a rejection as "try again later", not as an error worth surfacing.
    */
   async summarize(handoff: Handoff): Promise<Handoff> {
-    if (!this.model) return handoff;
-    const result = await this.memory.summarizeThread({
-      threadId: handoff.sessionId,
-      resourceId: this.resourceId,
-      model: this.model,
-      instructions:
-        "Summarize this conversation so a fresh session can continue it. Keep decisions made, facts the user stated, files and identifiers referenced, and anything still open. Drop pleasantries.",
-    } as never);
-    const summary =
-      typeof result === "string"
-        ? result
-        : ((result as { summary?: string })?.summary ?? "");
+    const summary = await summarizeThread(
+      this.memory,
+      handoff.sessionId,
+      this.resourceId,
+      "Summarize this conversation so a fresh session can continue it. Keep decisions made, facts the user stated, files and identifiers referenced, and anything still open. Drop pleasantries.",
+    );
     if (!summary) return handoff;
 
     const upgraded: Handoff = { ...handoff, summary, pending: false };

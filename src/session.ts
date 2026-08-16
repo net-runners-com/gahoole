@@ -4,6 +4,7 @@ import type { Memory } from "@mastra/memory";
 import type { Lifecycle, SessionEndReason } from "./lifecycle.js";
 import { turnStore, type TurnContext } from "./turn-context.js";
 import { MODEL } from "./agent.js";
+import { summarizeThread } from "./summarize.js";
 
 /**
  * A session is one Mastra memory thread. Ending a session and starting the
@@ -15,6 +16,9 @@ export class Session {
   #turns = 0;
   #startedAt = Date.now();
   #closed = false;
+
+  /** Supplied by the CLI; replaces agent.generate() when set. */
+  static backend?: { ask(prompt: string): Promise<string> };
 
   private constructor(
     id: string,
@@ -88,6 +92,7 @@ export class Session {
     try {
       const text = await turnStore.run(ctx, async () => {
         if (executor) return executor(prompt);
+        if (Session.backend) return Session.backend.ask(prompt);
         const res = await this.agent.generate(prompt, {
           memory: { resource: this.resourceId, thread: this.id },
         });
@@ -143,17 +148,12 @@ export class Session {
    * here, not the agent's.
    */
   async compact(): Promise<{ next: Session; summary: string }> {
-    const result = await this.memory.summarizeThread({
-      threadId: this.id,
-      resourceId: this.resourceId,
-      model: MODEL,
-      instructions:
-        "Summarize this conversation so it can be continued in a fresh thread. Keep decisions, facts the user stated about themselves, and open questions. Drop pleasantries.",
-    });
-    const summary =
-      typeof result === "string"
-        ? result
-        : ((result as { summary?: string })?.summary ?? JSON.stringify(result));
+    const summary = await summarizeThread(
+      this.memory,
+      this.id,
+      this.resourceId,
+      "Summarize this conversation so it can be continued in a fresh session. Keep decisions, facts the user stated about themselves, and open questions. Drop pleasantries.",
+    );
 
     await this.end("compact");
     const next = await Session.start({

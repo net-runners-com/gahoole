@@ -14,6 +14,7 @@ import { connectMcp } from "./mcp.js";
 import { formatSessions, SessionStore } from "./sessions.js";
 import { HandoffStore } from "./handoff.js";
 import { banner, readVersion } from "./banner.js";
+import { backendKind, createBackend, type Backend } from "./backends/index.js";
 import { MODEL } from "./agent.js";
 
 const DIM = "\x1b[2m";
@@ -91,12 +92,25 @@ async function main(): Promise<void> {
   const sessions = new SessionStore(memory, RESOURCE_ID);
   sessions.register(lifecycle);
 
-  const handoffs = new HandoffStore(memory, RESOURCE_ID, MODEL);
+  const handoffs = new HandoffStore(memory, RESOURCE_ID);
   let carriedOver = false;
 
   const mcp = await connectMcp(lifecycle, { quiet: true });
   registerMcpPolicy(lifecycle, mcp.servers);
   const agent = createAgent(lifecycle, memory, mcp.tools);
+
+  // The model backend. ai-mode drives a browser and needs no key; api uses
+  // the Mastra agent and is the only one that can call tools.
+  const kind = backendKind();
+  const backend: Backend = createBackend(kind, agent, RESOURCE_ID, () => session.id);
+  Session.backend = backend;
+  lifecycle.on("ProcessExit", async () => {
+    await backend.close?.();
+  });
+  // Each gahoole session gets its own model-side conversation.
+  lifecycle.on("SessionStart", () => {
+    backend.reset?.();
+  });
 
   // Which session does this process open with?
   let startId: string | undefined;
@@ -153,7 +167,7 @@ async function main(): Promise<void> {
     stdout.write(
       banner({
         version: readVersion(),
-        model: MODEL,
+        model: kind === "ai-mode" ? backend.name : MODEL,
         cwd: process.cwd(),
         sessionId: session.id,
         origin: startId
@@ -161,7 +175,7 @@ async function main(): Promise<void> {
           : carriedOver
             ? "carried over"
             : undefined,
-        tools: 2 + Object.keys(mcp.tools).length,
+        tools: kind === "ai-mode" ? 0 : 2 + Object.keys(mcp.tools).length,
         mcpServers: mcp.servers.length,
       }),
     );
