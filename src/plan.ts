@@ -48,6 +48,15 @@ export interface StepOutcome {
   note?: string;
   /** Tasks the step discovered are needed. */
   added: string[];
+  /**
+   * Did the reply actually say how it went, or is `status` the default?
+   *
+   * A step turn that forgets to report is treated as done, because looping on
+   * silence is worse. But a turn that was asked to plan *and* work cannot be
+   * read that way — a reply containing only a plan would mark the first step
+   * finished before anything happened — so that caller checks this first.
+   */
+  explicit: boolean;
 }
 
 const DONE_RE = /\b(DONE|完了)\b/i;
@@ -56,16 +65,65 @@ const FAIL_RE = /\b(FAILED|BLOCKED|失敗|できません|できなかった)\b/
 const ADD_RE = /^\s*(?:NEXT|ADD|追加):\s*(.{3,200})$/gim;
 
 /**
+ * Per-step verdicts inside one reply.
+ *
+ * A turn is asked for every outstanding step it can manage, not for one, so a
+ * single reply reports on several — "STEP 2 DONE", "STEP 3 FAILED". Read them
+ * all rather than collapsing the reply into a single status, which would mark
+ * three finished steps as one.
+ */
+const STEP_RE = /\bSTEP\s*(\d+)\s*(DONE|SKIP(?:PED)?|FAILED|完了|不要|失敗)/gi;
+
+export interface StepVerdict {
+  id: number;
+  status: Exclude<TaskStatus, "todo" | "doing">;
+}
+
+/**
+ * Did the reply say the *goal* is met, rather than a step?
+ *
+ * "STEP 2 DONE" and "DONE" both contain DONE, so the per-step verdicts are
+ * removed before looking. Getting this wrong is expensive in both directions:
+ * read a step's DONE as the goal's and the run stops early, miss the goal's
+ * and it keeps asking for work that is finished — which is what it did,
+ * costing 41 queries against the 33 the same three tasks took when a single
+ * DONE was allowed to end them.
+ */
+export function saysAllDone(text: string): boolean {
+  const withoutSteps = text.replace(STEP_RE, "");
+  return /\bDONE\b|\b完了\b/i.test(withoutSteps);
+}
+
+export function readStepVerdicts(text: string): StepVerdict[] {
+  const out: StepVerdict[] = [];
+  for (const m of text.matchAll(STEP_RE)) {
+    const id = Number(m[1]);
+    const word = (m[2] ?? "").toUpperCase();
+    if (!Number.isFinite(id)) continue;
+    const status = /FAIL|失敗/.test(word)
+      ? "failed"
+      : /SKIP|不要/.test(word)
+        ? "skipped"
+        : "done";
+    out.push({ id, status });
+  }
+  return out;
+}
+
+/**
  * Read a step's own verdict. Asking for a keyword is more reliable than asking
  * for JSON — the marker survives the page's markdown rendering, and a step
  * that forgets to say anything is treated as done rather than looping.
  */
 export function readOutcome(text: string): StepOutcome {
   const added = [...text.matchAll(ADD_RE)].map((m) => (m[1] ?? "").trim());
-  if (FAIL_RE.test(text)) return { status: "failed", note: firstLine(text), added };
-  if (SKIP_RE.test(text)) return { status: "skipped", note: firstLine(text), added };
-  if (DONE_RE.test(text)) return { status: "done", added };
-  return { status: "done", note: "no verdict given", added };
+  const explicit = true;
+  if (FAIL_RE.test(text))
+    return { status: "failed", note: firstLine(text), added, explicit };
+  if (SKIP_RE.test(text))
+    return { status: "skipped", note: firstLine(text), added, explicit };
+  if (DONE_RE.test(text)) return { status: "done", added, explicit };
+  return { status: "done", note: "no verdict given", added, explicit: false };
 }
 
 const firstLine = (t: string): string =>

@@ -52,30 +52,84 @@ const script = (replies: string[]) => {
   };
 };
 
-// Plan, then one turn per step, then complete.
+// One turn may finish several steps, and says so per step. Measured: walking
+// the plan a step per turn cost 32 queries on the benchmark's three autonomous
+// tasks, asking for everything outstanding cost 23 — the model batches a write
+// and the command that runs it, and one step per turn forbids that.
 {
   const s = script([
     "1. write the file\n2. compile it\n3. run it",
-    "wrote it. DONE",
-    "compiled. DONE",
-    "ran it. DONE",
+    "wrote and compiled.\nSTEP 1 DONE\nSTEP 2 DONE",
+    "ran it.\nSTEP 3 DONE\nDONE",
   ]);
   const r = await runAutonomously("build fizzbuzz", { run: s.run });
   assert.equal(r.stopped, "complete");
-  assert.equal(r.steps, 3);
+  assert.equal(r.steps, 2, "three steps in two turns");
   assert.ok(r.tasks.every((t) => t.status === "done"));
-  assert.equal(s.seen.length, 4, "one planning turn plus one per step");
-  assert.ok(s.seen[1]?.includes("Now do step 1"), "steps are given one at a time");
-  assert.ok(s.seen[2]?.includes("write the file"), "and carry the plan with them");
+  assert.equal(s.seen.length, 3, "one planning turn plus two working turns");
+  assert.ok(
+    s.seen[1]?.includes("still outstanding"),
+    "the turn is asked for everything left, not for one step",
+  );
+  assert.ok(s.seen[1]?.includes("write the file"), "and carries the plan with it");
+}
+
+// The planning turn is asked to start work too, so its own verdict counts.
+{
+  const s = script([
+    "1. write the file\n2. run it\nwrote it. DONE",
+    "ran it.\nSTEP 2 DONE\nDONE",
+  ]);
+  const r = await runAutonomously("build it", { run: s.run });
+  assert.equal(r.tasks[0]?.status, "done", "step 1 was finished while planning");
+  assert.equal(r.steps, 1, "so only one working turn was needed");
+}
+
+// A reply that reports nothing still moves: silence is taken as done, the same
+// reading a one-step turn used to get, so it cannot loop forever.
+{
+  const s = script([
+    "1. one thing\n2. two thing",
+    "I had a look around.",
+    "and again.",
+  ]);
+  const r = await runAutonomously("go", { run: s.run, maxSteps: 4 });
+  assert.equal(r.stopped, "complete");
+  assert.ok(r.steps <= 2);
+}
+
+// One DONE for the whole goal ends the run, however many steps are unticked.
+// Requiring each to carry its own is what made planning cost more than not
+// planning at all: 41 queries against 33 on the same three benchmark tasks.
+{
+  const s = script([
+    "1. one thing\n2. two thing\n3. three thing",
+    "did the lot. DONE",
+  ]);
+  const r = await runAutonomously("go", { run: s.run, maxSteps: 8 });
+  assert.equal(r.stopped, "complete");
+  assert.equal(r.steps, 1, "one working turn, not three");
+  assert.ok(r.tasks.every((t) => t.status === "done"));
+}
+
+// ...and a step's own DONE is not mistaken for the goal's.
+{
+  const s = script([
+    "1. one thing\n2. two thing",
+    "STEP 1 DONE",
+    "STEP 2 DONE\nDONE",
+  ]);
+  const r = await runAutonomously("go", { run: s.run, maxSteps: 8 });
+  assert.equal(r.steps, 2, "STEP 1 DONE did not end the run");
 }
 
 // A step can add work it discovered.
 {
   const s = script([
     "1. read the config\n2. apply the change",
-    "DONE\nNEXT: back up the original first",
-    "DONE",
-    "DONE",
+    "STEP 1 DONE\nNEXT: back up the original first",
+    "STEP 2 DONE",
+    "STEP 3 DONE\nDONE",
   ]);
   const r = await runAutonomously("edit config", { run: s.run });
   assert.equal(r.tasks.length, 3, "the discovered step joins the list");
@@ -83,9 +137,15 @@ const script = (replies: string[]) => {
   assert.equal(r.stopped, "complete");
 }
 
-// The budget is a hard stop.
+// The budget is a hard stop. The replies report per-step progress and never
+// claim the goal itself is met, which is the only thing that ends a run early.
 {
-  const s = script(["1. one thing\n2. two thing\n3. three thing"]);
+  const s = script([
+    "1. one thing\n2. two thing\n3. three thing",
+    "STEP 1 DONE",
+    "STEP 2 DONE",
+    "STEP 3 DONE",
+  ]);
   const r = await runAutonomously("go", { run: s.run, maxSteps: 2 });
   assert.equal(r.stopped, "budget");
   assert.equal(r.steps, 2);
@@ -95,8 +155,8 @@ const script = (replies: string[]) => {
 {
   const s = script([
     "1. one thing\n2. two thing\n3. three thing\n4. four thing",
-    "FAILED no compiler",
-    "FAILED still none",
+    "STEP 1 FAILED no compiler",
+    "STEP 2 FAILED still none",
     "FAILED give up",
   ]);
   const r = await runAutonomously("go", { run: s.run });

@@ -336,6 +336,59 @@ const tools = {
   assert.equal(stub.prompts.length, 1, "no preamble when there is nothing to call");
 }
 
+// --- several calls in one reply, each with its own block ---------------------
+{
+  const reply = [
+    "まず書きます。",
+    'TOOL_CALL: {"tool":"write_file","input":{"path":"a.cpp"}}',
+    "```cpp",
+    "#include <iostream>",
+    "```",
+    "次に実行します。",
+    'TOOL_CALL: {"tool":"run_command","input":{"command":"g++","args":["a.cpp"]}}',
+  ].join("\n");
+
+  const calls = parseCalls(reply);
+  assert.equal(calls.length, 2, "both calls are parsed");
+  assert.equal(
+    (calls[0]!.input as { content?: string }).content,
+    "#include <iostream>",
+    "the block attaches to the call above it",
+  );
+  assert.equal(
+    (calls[1]!.input as { content?: string }).content,
+    undefined,
+    "and not to the one after it",
+  );
+}
+
+// A block written before the marker still counts when there is only one call —
+// models put the code first about as often as last.
+{
+  const calls = parseCalls(
+    ["```js", "console.log(1)", "```", 'TOOL_CALL: {"tool":"write_file","input":{"path":"a.js"}}'].join("\n"),
+  );
+  assert.equal(calls.length, 1);
+  assert.equal((calls[0]!.input as { content?: string }).content, "console.log(1)");
+}
+
+// --- the prose from every reply survives the turn ---------------------------
+//
+// The plan an autonomous run asks for arrives in the same reply as the tool
+// calls that begin it. Returning only the final reply threw the plan away.
+{
+  const stub = new StubBackend([
+    ["1. ファイルを作る", "2. 実行する", 'TOOL_CALL: {"tool":"read_file","input":{"path":"a.txt"}}'].join("\n"),
+    "できました。",
+  ]);
+  const loop = new ToolLoop(stub, tools, lifecycle);
+  loop.reset();
+  const out = await inTurn(() => loop.ask("やって"));
+  assert.match(out, /1\. ファイルを作る/, "the list written alongside the calls survives");
+  assert.match(out, /できました。/, "and so does the answer it ended on");
+  assert.ok(!out.includes("TOOL_CALL"), "the markers themselves do not");
+}
+
 console.log(
   `ok — tool protocol: ${describeTool("read_file", tools.read_file).params.join(",")} parsed, denied, bounded`,
 );

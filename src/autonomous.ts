@@ -2,6 +2,8 @@ import { log } from "./output.js";
 import {
   parsePlan,
   readOutcome,
+  readStepVerdicts,
+  saysAllDone,
   remaining,
   renderPlan,
   type Task,
@@ -43,24 +45,53 @@ export interface AutoResult {
   stopped: "complete" | "budget" | "stuck";
 }
 
+/**
+ * Plan and start, in one turn.
+ *
+ * It used to only plan, which cost a query and moved nothing: measured over
+ * three runs, every autonomous benchmark task spent its first turn producing a
+ * list that did not parse and no work. Asking for the first step in the same
+ * reply makes that turn earn its keep whether or not the list comes back in a
+ * shape the parser recognises.
+ */
 const PLAN_PROMPT = (goal: string) => `${goal}
 
-Before doing any of it, write the plan as a short numbered list — one line per
-step, in the order you will do them, each a concrete action you can take with
-the tools you have. Between three and eight steps. No preamble, no commentary,
-just the list.`;
+First write the plan as a short numbered list — one line per step, in the order
+you will do them, each a concrete action you can take with the tools you have.
+Between three and eight steps.
 
-const STEP_PROMPT = (task: Task, tasks: Task[], goal: string) => `Overall goal: ${goal}
+Then, in this same reply, carry out step 1 — the tool calls go after the list.
+Do not wait to be asked. End with DONE once step 1 is finished, or FAILED and
+why if it could not be.`;
+
+/**
+ * Carry on with the plan — as far as one reply can get.
+ *
+ * This replaced a turn per step, which was the obvious design and the
+ * expensive one. Measured over the benchmark's three autonomous tasks: walking
+ * the plan one step per turn cost 32 queries, and asking for "the remaining
+ * steps, as many as you can" cost 23 for the same three passes. The model
+ * batches a write and the command that runs it into a single reply; a loop
+ * that hands it one step at a time forbids exactly that.
+ *
+ * The plan is still parsed, still shown, and still what the run is tracked
+ * against — it just is not used as a leash.
+ */
+const STEP_PROMPT = (tasks: Task[], goal: string) => `Overall goal: ${goal}
 
 The plan, and where we are:
 ${renderPlan(tasks, false)}
 
-Now do step ${task.id}: ${task.title}
+Carry out the steps that are still outstanding. Do as many as you can in this
+one reply — put every tool call that does not need to wait for another's output
+in the same reply, rather than stopping after each one.
 
-Use the tools to actually do it — do not describe what you would do. When the
-step is finished, end your reply with DONE. If it turns out to be unnecessary
-say SKIP, and if you cannot do it say FAILED and why. If doing it revealed
-another step that is needed, add a line starting NEXT: describing it.`;
+Use the tools to actually do it; do not describe what you would do. After each
+step you finish, write a line "STEP <number> DONE". When the whole goal is met
+write DONE on its own line. If a step turns out to be unnecessary write
+"STEP <number> SKIP", and if you cannot do one write "STEP <number> FAILED" and
+why. If the work revealed a step the plan is missing, add a line starting NEXT:
+describing it.`;
 
 const CONTINUE_PROMPT = (goal: string) => `Goal: ${goal}
 
@@ -130,38 +161,79 @@ export async function runAutonomously(
     return continueUntilDone(goal, planText, deps, maxSteps);
   }
 
+  // The planning turn was asked to do step 1 as well, so it may already be
+  // behind us. Only an explicit verdict counts: a reply that is nothing but a
+  // list would otherwise mark the first step finished before anything ran.
+  const opening = readOutcome(planText);
+  if (opening.explicit && tasks[0]) {
+    tasks[0].status = opening.status;
+    if (opening.note) tasks[0].note = opening.note;
+    for (const title of opening.added) {
+      if (tasks.length >= 12) break;
+      tasks.push({ id: tasks.length + 1, title, status: "todo" });
+    }
+  }
   deps.onPlan?.(tasks);
 
   let steps = 0;
   while (steps < maxSteps) {
-    const task = remaining(tasks)[0];
-    if (!task) return { tasks, steps, stopped: "complete" };
+    const next = remaining(tasks)[0];
+    if (!next) return { tasks, steps, stopped: "complete" };
 
-    task.status = "doing";
+    const before = remaining(tasks).length;
+    next.status = "doing";
     deps.onPlan?.(tasks);
     steps++;
 
     let text: string;
     try {
-      text = await deps.run(STEP_PROMPT(task, tasks, goal));
+      text = await deps.run(STEP_PROMPT(tasks, goal));
     } catch (e) {
       // A failed turn ends the run rather than burning the budget retrying;
       // the handoff has already saved the conversation.
-      task.status = "failed";
-      task.note = e instanceof Error ? e.message.slice(0, 80) : String(e);
+      next.status = "failed";
+      next.note = e instanceof Error ? e.message.slice(0, 80) : String(e);
       deps.onPlan?.(tasks);
       return { tasks, steps, stopped: "stuck" };
     }
 
-    const outcome = readOutcome(text);
-    task.status = outcome.status;
-    if (outcome.note) task.note = outcome.note;
+    // A turn may finish several steps, and says so per step.
+    const verdicts = readStepVerdicts(text);
+    for (const v of verdicts) {
+      const task = tasks.find((t) => t.id === v.id);
+      if (task && task.status !== "done") task.status = v.status;
+    }
 
+    const outcome = readOutcome(text);
     for (const title of outcome.added) {
       if (tasks.length >= 12) break;
       tasks.push({ id: tasks.length + 1, title, status: "todo" });
     }
+
+    // A reply that reports nothing at all still moves the run: the step it was
+    // pointed at is taken as done, the same reading a single-step turn used to
+    // get, so silence cannot loop forever.
+    if (verdicts.length === 0) {
+      next.status = outcome.status;
+      if (outcome.note) next.note = outcome.note;
+    }
+
+    // And a reply that says the goal itself is met ends the run, whatever the
+    // per-step bookkeeping says. Insisting every task carry its own DONE is
+    // what made this path cost more than having no plan at all.
+    if (saysAllDone(text)) {
+      for (const t of tasks) {
+        if (t.status === "todo" || t.status === "doing") t.status = "done";
+      }
+      deps.onPlan?.(tasks);
+      return { tasks, steps, stopped: "complete" };
+    }
     deps.onPlan?.(tasks);
+
+    // No progress at all, twice running, is not a run that needs more turns.
+    if (remaining(tasks).length === before && steps > 1) {
+      return { tasks, steps, stopped: "stuck" };
+    }
 
     // Three failures in a row is not a run that needs more steps.
     const tail = tasks.filter((t) => t.status !== "todo").slice(-3);

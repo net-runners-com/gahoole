@@ -145,10 +145,6 @@ async function makeGahoole(): Promise<{
 
   const lifecycle = new Lifecycle();
   registerFileGuard(lifecycle);
-  let toolCalls = 0;
-  lifecycle.on("PostToolUse", () => {
-    toolCalls++;
-  });
 
   const memory = createMemory();
   const agent = createAgent(lifecycle, memory);
@@ -174,21 +170,20 @@ async function makeGahoole(): Promise<{
         lifecycle,
         resourceId: "duel",
       });
-      const before = toolCalls;
+      // Round trips, not tool calls: a reply carrying three calls costs one
+      // query, and counting calls would hide the whole point of batching.
+      const queriesBefore = loop.queries;
       let answer = "";
-      let turns = 0;
       try {
         if (task.group === "auto") {
           await runAutonomously(task.prompt, {
             maxSteps: 5,
             run: async (p) => {
-              turns++;
               answer = await session.run(p);
               return answer;
             },
           });
         } else {
-          turns = 1;
           answer = await session.run(task.prompt);
         }
       } catch (e) {
@@ -196,7 +191,7 @@ async function makeGahoole(): Promise<{
       }
       await session.end("exit");
       // gahoole's cost is queries against a rate limit, not dollars.
-      return { answer, turns: turns + (toolCalls - before), costUSD: 0 };
+      return { answer, turns: loop.queries - queriesBefore, costUSD: 0 };
     },
     close: async () => {
       await raw.close?.();

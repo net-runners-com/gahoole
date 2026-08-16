@@ -43,6 +43,8 @@ export const BODY_SUFFIX = "TOOL_END";
  * with nothing after it. Inside a code fence the same text survives intact.
  */
 const FENCE_RE = /```[^\n]*\n([\s\S]*?)```/;
+/** The same, scanning the whole reply so each block can be placed. */
+const FENCE_G = /```[^\n]*\n([\s\S]*?)```/g;
 
 /** Leaves room for the instruction that follows the result. */
 const MAX_RESULT = 6000;
@@ -135,6 +137,12 @@ export function buildPreamble(tools: ToolSpec[]): string {
     "",
     "Write it as plain text, not in a code block, and end your reply there.",
     "",
+    "You may write several of these lines in one reply, and you should whenever",
+    "the steps do not need to see each other's output — write a file and run it,",
+    "or read two files at once. They run in order and all the results come back",
+    "together, which is one round trip instead of three. A code block belongs to",
+    "the line directly above it.",
+    "",
     "For file contents, leave `content` out of the JSON and put the text in a",
     "fenced code block on the next line. Quotes, newlines and angle brackets",
     "all survive there, and none of them survive anywhere else:",
@@ -169,7 +177,7 @@ export function buildReminder(tools: ToolSpec[]): string {
   return [
     `[Tools you can run here: ${names}.`,
     `If this asks you to create, change, delete, run or inspect anything, you must call a tool — describing it does not do it, and you cannot know a file's contents or a program's output without reading or running it.`,
-    `Reply with a single ${CALL_PREFIX} line and nothing else. Do not search the web. If the request is only a question, answer it normally.]`,
+    `Reply with ${CALL_PREFIX} lines and nothing else — as many as the next steps need, in order. Do not search the web. If the request is only a question, answer it normally.]`,
   ].join(" ");
 }
 
@@ -183,16 +191,42 @@ export function parseBody(text: string): string | undefined {
   return text.match(FENCE_RE)?.[1]?.replace(/\n$/, "") ?? text.match(BODY_RE)?.[1];
 }
 
+/**
+ * Every call in the reply, each with the block that belongs to it.
+ *
+ * A reply may carry more than one call, and that is the point: every round
+ * trip here is a query against the rate limit, so a turn that writes a file
+ * and runs it costs one query instead of two. They execute in order and their
+ * results come back together.
+ *
+ * Which block goes with which call is settled by position — a fenced block
+ * belongs to the TOOL_CALL line above it, up to the next one. With a single
+ * call the question does not arise, and a block written *before* the marker
+ * still counts, because models put the code first about as often as last.
+ */
 export function parseCalls(text: string): ParsedCall[] {
-  const body = parseBody(text);
+  const found = [...text.matchAll(CALL_RE)];
+  const fences = [...text.matchAll(FENCE_G)].map((m) => ({
+    at: m.index ?? 0,
+    body: (m[1] ?? "").replace(/\n$/, ""),
+  }));
+
   const calls: ParsedCall[] = [];
-  for (const m of text.matchAll(CALL_RE)) {
+  for (let i = 0; i < found.length; i++) {
+    const m = found[i]!;
     const json = m[1];
     if (!json) continue;
     try {
       const parsed = JSON.parse(json) as { tool?: unknown; input?: unknown };
       if (typeof parsed.tool !== "string") continue;
       const input = (parsed.input ?? {}) as Record<string, unknown>;
+
+      const from = m.index ?? 0;
+      const until = found[i + 1]?.index ?? Number.POSITIVE_INFINITY;
+      const body =
+        fences.find((f) => f.at > from && f.at < until)?.body ??
+        (found.length === 1 ? parseBody(text) : undefined);
+
       // The block supplies the field the model was told to leave out.
       if (body !== undefined && input.content === undefined) input.content = body;
       calls.push({ tool: parsed.tool, input });

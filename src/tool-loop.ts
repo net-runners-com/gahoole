@@ -76,6 +76,12 @@ export class ToolLoop implements Backend {
   #brief = "";
   /** Restated with every question. */
   #hint = "";
+  /**
+   * Round trips to the model, which is the only cost that matters here: the
+   * rate limit counts queries, not tool calls. Two tools in one reply is one
+   * query; counting tool calls instead would have hidden exactly that.
+   */
+  #queries = 0;
   readonly #hooks: ReturnType<typeof createToolHooks>;
 
   constructor(
@@ -110,6 +116,10 @@ export class ToolLoop implements Backend {
     return this.#tools;
   }
 
+  get queries(): number {
+    return this.#queries;
+  }
+
   get name(): string {
     return `${this.inner.name}+tools`;
   }
@@ -132,6 +142,7 @@ export class ToolLoop implements Backend {
         .filter(Boolean)
         .join("\n\n");
       this.#primed = true;
+      this.#queries++;
       return this.inner.ask(head ? `${head}\n\n${prompt}` : prompt, attachments);
     }
 
@@ -152,7 +163,27 @@ export class ToolLoop implements Backend {
       .join("\n\n");
     this.#primed = true;
 
+    this.#queries++;
     let answer = await this.inner.ask(`${head}\n\n${prompt}`, attachments);
+
+    // Prose from every reply in the turn, not just the last one.
+    //
+    // Only the final reply used to survive, and everything said on the way to
+    // it was thrown away — including, it turned out, the plan. An autonomous
+    // run opens by asking for a numbered list; that reply also carries tool
+    // calls, so the loop ran them, asked the model to continue, and returned
+    // the continuation. The list never reached the parser, which reported "no
+    // plan came back" on every autonomous task across five measured runs and
+    // sent each of them down the open-ended path instead.
+    // A reply is kept when it earned its place: it carried tool calls, or it
+    // is the answer the turn ends on. A reply that had to be nudged is not
+    // kept — the nudge fires because that reply claimed work it had not done,
+    // and repeating the claim is the one thing worth losing.
+    const said: string[] = [];
+    const keep = (text: string) => {
+      const prose = stripCalls(text).trim();
+      if (prose && !said.includes(prose)) said.push(prose);
+    };
 
     let nudged = false;
     let ran = 0;
@@ -166,6 +197,7 @@ export class ToolLoop implements Backend {
         const bad = parseMalformed(answer);
         if (!nudged && bad.length > 0) {
           nudged = true;
+          this.#queries++;
           answer = await this.inner.ask(
             `Your ${"TOOL_CALL:"} line could not be read as JSON (${bad[0]!.reason}), so nothing ran. Send it again. Put file contents in a ${"TOOL_BODY:"} block instead of inside the JSON.`,
           );
@@ -178,6 +210,7 @@ export class ToolLoop implements Backend {
         // nudging twice would just spend the rate limit on insistence.
         if (!nudged && announcesTool(answer, Object.keys(this.#tools))) {
           nudged = true;
+          this.#queries++;
           answer = await this.inner.ask(
             `You described using a tool but did not emit the ${"TOOL_CALL:"} line, so nothing ran. Emit it now, on its own line, with no other text.`,
           );
@@ -189,27 +222,32 @@ export class ToolLoop implements Backend {
         // to catch, because the reply reads exactly like success.
         if (!nudged && ran === 0 && (claimsWork(answer) || needsAction(prompt))) {
           nudged = true;
+          this.#queries++;
           answer = await this.inner.ask(
             `No tool ran, so nothing actually happened — anything you reported is a guess. Do it for real now: emit one ${"TOOL_CALL:"} line and nothing else. If the task genuinely needs no tool, say why in one sentence.`,
           );
           continue;
         }
-        return stripCalls(answer);
+        keep(answer);
+        return said.join("\n\n");
       }
 
+      keep(answer);
       ran += calls.length;
       const results: string[] = [];
       for (const call of calls) {
         results.push(formatResult(call.tool, await this.#run(call.tool, call.input)));
       }
 
+      this.#queries++;
       answer = await this.inner.ask(
         `${results.join("\n")}\n\nContinue. Answer the original question using these results.`,
       );
     }
 
     // Out of iterations: hand back what we have rather than looping forever.
-    return stripCalls(answer);
+    keep(answer);
+    return said.join("\n\n");
   }
 
   /** One tool call, through the same hooks a native tool call would take. */

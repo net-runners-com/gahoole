@@ -134,24 +134,70 @@ session boundary happened.
 than by reading the reply. `npm run duel` runs the *same nine* against Claude
 Code as well, so the numbers below come from one task list and one verifier.
 
-| | reason | solve | auto | total | per task | turns | cost |
+| | reason | solve | auto | total | per task | model calls | cost |
 |---|---|---|---|---|---|---|---|
 | Claude Code · haiku-4.5 | 3/3 | 3/3 | 3/3 | **9/9** | 19.2s | 28 | $0.38 |
 | Claude Code · sonnet-5 | 3/3 | 3/3 | 3/3 | **9/9** | 16.6s | 21 | $1.53 |
 | Claude Code · opus-5 | 3/3 | 3/3 | 3/3 | **9/9** | 16.8s | 19 | $2.08 |
-| gahoole (ai-mode) | 3/3 | 3/3 | 3/3 | **9/9** | 44.4s | 38 | none |
+| gahoole (ai-mode) | 3/3 | 3/3 | 3/3 | **9/9** | 28.7s | 29 | none |
 
 **All four score 9/9, which means the benchmark no longer separates them.**
 What it still separates is price and patience: haiku reaches the same score for
-a fifth of opus's cost, opus gets there in the fewest turns, and gahoole pays
-in wall clock and queries rather than dollars — 44s a task against 17-19s, and
-38 turns of a rate limit measured at roughly eighty per ten minutes.
+a fifth of opus's cost, and gahoole pays in wall clock and queries rather than
+dollars.
 
 Read the comparison as **harness plus model, not model**. Claude Code has
 native tool calling and a purpose-built Read/Write/Bash toolset; gahoole types
 into a browser and parses markers out of rendered prose. The reasoning group is
 the only one where the two are close to comparable, because no tools are
 involved.
+
+### Getting there in fewer calls
+
+gahoole opened at 42 model calls and finished at 29, without losing a task.
+Every one of those calls is a query against a rate limit of roughly eighty per
+ten minutes, so this is the number that decides how much work fits in a
+session.
+
+| | change | auto | total |
+|---|---|---|---|
+| 1 | several tool calls per reply | 32 | 42 |
+| 2 | keep the prose from every reply in a turn | 23 | 33 |
+| 3 | restore list markers when reading the page | 32 | 42 |
+| 4 | let one turn finish several plan steps | 31 | 41 |
+| 5 | end the run on the goal's own DONE | **19** | **29** |
+
+Two of those made it worse before the last one made it better, and both are
+worth keeping written down.
+
+**The protocol forbade batching.** It said "reply with a single TOOL_CALL line
+and nothing else", so writing a file and running it always cost two round
+trips. Replies may now carry as many calls as the next steps need; a fenced
+block belongs to the call above it, which is what made more than one possible.
+
+**Only the last reply of a turn survived.** An autonomous run opens by asking
+for a numbered plan, and that reply also carries the calls that begin the work
+— so the loop ran them, asked for a continuation, and returned the
+continuation. The plan never reached the parser. Every autonomous task across
+five measured runs reported "no plan came back" for this reason. Prose from
+every reply is now kept, except from a reply that had to be nudged: the nudge
+fires because that reply claimed work it had not done.
+
+**The numbers were drawn, not written.** With the prose kept, the plan still
+did not parse — because AI Mode renders a numbered list as an `<ol>`, and the
+"1." is drawn by the list rather than written in the item. Read back as text it
+is three bare sentences. The markers are now put back into the DOM before
+reading and taken out again after, which is the same class of problem as
+`<iostream>` vanishing from a rendered code block.
+
+**Then planning made it slower.** With a plan finally in hand, walking it one
+step per turn cost 32 calls against the 23 the same tasks took with no plan at
+all — a loop that hands the model one step at a time forbids exactly the
+batching that had just been enabled. Asking instead for "everything still
+outstanding, as far as one reply can get" helped, but the run still could not
+end until every step carried its own `STEP n DONE`. Letting a single
+goal-level DONE end the run brought it to 19. The plan is still parsed, still
+shown, still what the run is tracked against — it is just not used as a leash.
 
 ### What the duel actually found
 
