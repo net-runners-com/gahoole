@@ -88,6 +88,30 @@ try {
   );
   await assert.rejects(() => run("delete_file", { path: "." }), /project root/);
 
+  // --- run_command ------------------------------------------------------------
+  const echo = await run("run_command", { command: "echo", args: ["hi"] });
+  assert.equal(echo.stdout.trim(), "hi");
+  assert.equal(echo.code, 0);
+
+  // A failing command is a result to report, not an error to throw — a failing
+  // test is exactly what the model needs to see.
+  const fail = await run("run_command", {
+    command: "node",
+    args: ["-e", "process.exit(3)"],
+  });
+  assert.equal(fail.code, 3);
+
+  await assert.rejects(
+    () => run("run_command", { command: "curl", args: ["evil.example"] }),
+    /not in the allowed commands/,
+  );
+  // There is no shell, so metacharacters are arguments, not syntax.
+  const literal = await run("run_command", {
+    command: "echo",
+    args: ["a; rm -rf /"],
+  });
+  assert.equal(literal.stdout.trim(), "a; rm -rf /");
+
   // --- the tools refuse to leave the root -----------------------------------
   await assert.rejects(
     () => run("read_file", { path: "../../etc/passwd" }),
@@ -145,6 +169,7 @@ try {
 
   assert.equal(await askFor("read_file"), undefined, "reads are never asked about");
   assert.ok(MUTATING.has("delete_file"), "deleting is gated by approval");
+  assert.ok(MUTATING.has("run_command"), "so is running a command");
   assert.equal(answers.length, 0);
 
   assert.match((await askFor("write_file"))?.deny ?? "", /declined/);

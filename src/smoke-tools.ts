@@ -14,6 +14,7 @@ import {
   describeTool,
   formatResult,
   parseCalls,
+  parseMalformed,
   stripCalls,
 } from "./tool-protocol.js";
 
@@ -177,6 +178,127 @@ const tools = {
   const answer = await inTurn(() => loop.ask("loop forever"));
   assert.equal(answer, "", "the trailing call markers are stripped");
   assert.ok(stub.prompts.length <= 5, `bounded at ${stub.prompts.length} prompts`);
+}
+
+// A fenced block is the body, and angle brackets survive it — the plain-text
+// path loses them to the page's markdown renderer.
+{
+  const fenced = [
+    'TOOL_CALL: {"tool":"write_file","input":{"path":"main.cpp"}}',
+    "```cpp",
+    "#include <iostream>",
+    'int main(){ std::cout << "Fizz"; }',
+    "```",
+  ].join("\n");
+  const parsed = parseCalls(fenced);
+  assert.equal(parsed.length, 1);
+  const content = (parsed[0]!.input as { content: string }).content;
+  assert.ok(content.includes("<iostream>"), "angle brackets survive");
+  assert.ok(content.includes('std::cout << "Fizz"'), "so do quotes");
+}
+
+// File contents ride in a block, so quotes and newlines need no escaping.
+{
+  const withBody = [
+    'TOOL_CALL: {"tool":"write_file","input":{"path":"a.cpp"}}',
+    "TOOL_BODY:",
+    '#include <iostream>',
+    'int main(){ std::cout << "Fizz\n"; }',
+    "TOOL_END",
+  ].join("\n");
+  const parsed = parseCalls(withBody);
+  assert.equal(parsed.length, 1);
+  assert.equal(
+    (parsed[0]!.input as { content: string }).content,
+    '#include <iostream>\nint main(){ std::cout << "Fizz\n"; }',
+  );
+}
+
+// The failure this replaces: code inside the JSON is not valid JSON.
+{
+  const inline = 'TOOL_CALL: {"tool":"write_file","input":{"content":"cout << "Fizz";"}}';
+  assert.equal(parseCalls(inline).length, 0);
+  const bad = parseMalformed(inline);
+  assert.equal(bad.length, 1, "and it is reported rather than ignored");
+}
+
+// A call missing a required field is an error the model is told about, not a
+// success reported for work that did not happen.
+{
+  const stub = new StubBackend([
+    'TOOL_CALL: {"tool":"read_file","input":{}}',
+    "Sorry.",
+  ]);
+  const loop = new ToolLoop(stub, tools, lifecycle);
+  loop.reset();
+  await inTurn(() => loop.ask("save a note"));
+  assert.ok(
+    stub.prompts.at(-1)?.includes("missing path"),
+    `told what was missing: ${stub.prompts.at(-1)?.slice(0, 120)}`,
+  );
+}
+
+// A malformed marker line gets one correction request.
+{
+  const stub = new StubBackend([
+    'TOOL_CALL: {"tool":"write_file","input":{"content":"a "b" c"}}',
+    'TOOL_CALL: {"tool":"read_file","input":{"path":"a.txt"}}',
+    "Done.",
+  ]);
+  const loop = new ToolLoop(stub, tools, lifecycle);
+  loop.reset();
+  assert.equal(await inTurn(() => loop.ask("write it")), "Done.");
+  assert.ok(stub.prompts[1]?.includes("could not be read as JSON"));
+}
+
+// A reply that announces a tool without calling one is nudged exactly once.
+{
+  const stub = new StubBackend([
+    "まずは read_file ツールを使用します。",
+    'TOOL_CALL: {"tool":"read_file","input":{"path":"a.txt"}}',
+    "Done.",
+  ]);
+  const loop = new ToolLoop(stub, tools, lifecycle);
+  loop.reset();
+  const answer = await inTurn(() => loop.ask("write a file"));
+
+  assert.equal(answer, "Done.");
+  assert.ok(
+    stub.prompts[1]?.includes("did not emit"),
+    "the nudge says what was missing",
+  );
+}
+
+// Only tools that exist are nudged for: naming something unregistered is
+// prose, not an intention the loop can act on.
+{
+  const stub = new StubBackend(["まずは deploy_rocket を使用します。"]);
+  const loop = new ToolLoop(stub, tools, lifecycle);
+  loop.reset();
+  await inTurn(() => loop.ask("go"));
+  assert.equal(stub.prompts.length, 1, "no nudge for a tool that does not exist");
+}
+
+// And prose that merely mentions a tool name is left alone — a false nudge
+// costs a query.
+{
+  const stub = new StubBackend(["read_file reads files. Anything else?"]);
+  const loop = new ToolLoop(stub, tools, lifecycle);
+  loop.reset();
+  await inTurn(() => loop.ask("what tools are there?"));
+  assert.equal(stub.prompts.length, 1, "no nudge for a passing mention");
+}
+
+// And a model that keeps announcing is not nudged forever.
+{
+  const stub = new StubBackend([
+    "read_file を使用します。",
+    "やはり read_file を使用します。",
+  ]);
+  const loop = new ToolLoop(stub, tools, lifecycle);
+  loop.reset();
+  await inTurn(() => loop.ask("write a file"));
+  assert.equal(stub.prompts.length, 2, "nudged once, not twice");
 }
 
 // With no tools registered the wrapper gets out of the way entirely.

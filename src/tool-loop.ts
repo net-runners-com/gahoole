@@ -7,6 +7,7 @@ import {
   describeTool,
   formatResult,
   parseCalls,
+  parseMalformed,
   stripCalls,
 } from "./tool-protocol.js";
 
@@ -31,6 +32,19 @@ import {
  * Mode every round trip counts against a rate limit of roughly 77-100
  * queries — hence `maxIterations`.
  */
+/**
+ * Does this reply talk about running a tool without actually calling one?
+ * Deliberately narrow — it wants an announcement ("I will use write_file"),
+ * not a passing mention, because a false positive spends a query.
+ */
+function announcesTool(answer: string, tools: string[]): boolean {
+  const named = tools.some((t) => answer.includes(t));
+  if (!named) return false;
+  return /を使用|を使い|使います|してみます|作成します|実行します|will use|let me|going to|I will/i.test(
+    answer,
+  );
+}
+
 export class ToolLoop implements Backend {
   #primed = false;
   readonly #hooks: ReturnType<typeof createToolHooks>;
@@ -76,9 +90,36 @@ export class ToolLoop implements Backend {
 
     let answer = await this.inner.ask(`${head}\n\n${prompt}`, attachments);
 
+    let nudged = false;
     for (let i = 0; i < this.maxIterations; i++) {
       const calls = parseCalls(answer);
-      if (calls.length === 0) return stripCalls(answer);
+
+      if (calls.length === 0) {
+        // A marker line that would not parse is an attempt, not prose. Saying
+        // so gets a corrected call; swallowing it ends the turn having done
+        // nothing while the reply says otherwise.
+        const bad = parseMalformed(answer);
+        if (!nudged && bad.length > 0) {
+          nudged = true;
+          answer = await this.inner.ask(
+            `Your ${"TOOL_CALL:"} line could not be read as JSON (${bad[0]!.reason}), so nothing ran. Send it again. Put file contents in a ${"TOOL_BODY:"} block instead of inside the JSON.`,
+          );
+          continue;
+        }
+
+        // A model that says "I will use write_file" and stops has done
+        // nothing, and the user sees a turn that ended with an intention. One
+        // nudge is enough to convert it into the call it meant to make;
+        // nudging twice would just spend the rate limit on insistence.
+        if (!nudged && announcesTool(answer, Object.keys(this.tools))) {
+          nudged = true;
+          answer = await this.inner.ask(
+            `You described using a tool but did not emit the ${"TOOL_CALL:"} line, so nothing ran. Emit it now, on its own line, with no other text.`,
+          );
+          continue;
+        }
+        return stripCalls(answer);
+      }
 
       const results: string[] = [];
       for (const call of calls) {
@@ -106,8 +147,33 @@ export class ToolLoop implements Backend {
     }
 
     const tool = this.tools[name] as
-      | { execute?: (input: unknown, ctx?: unknown) => Promise<unknown> }
+      | {
+          execute?: (input: unknown, ctx?: unknown) => Promise<unknown>;
+          inputSchema?: { shape?: Record<string, { isOptional?: () => boolean }> };
+        }
       | undefined;
+
+    // A call missing a required field must not be reported as a success. It
+    // happened: asked to write a file, the model emitted the JSON but not the
+    // block carrying the contents, and two "write_file ok" lines went by with
+    // nothing on disk. Say what is missing and the next attempt has it.
+    const shape = tool?.inputSchema?.shape;
+    if (shape) {
+      const given = (input ?? {}) as Record<string, unknown>;
+      const missing = Object.entries(shape)
+        // Required unless the schema says otherwise: a field that cannot say
+        // is treated as required, which fails loudly rather than silently.
+        .filter(([k, v]) => given[k] === undefined && v?.isOptional?.() !== true)
+        .map(([k]) => k);
+      if (missing.length > 0) {
+        const error = new Error(
+          `${name} is missing ${missing.join(", ")} — file contents go in a fenced code block on the line after the call`,
+        );
+        await this.#hooks.afterToolCall({ toolName: name, error });
+        return { error };
+      }
+    }
+
     if (!tool?.execute) {
       const error = new Error(`no such tool: ${name}`);
       await this.#hooks.afterToolCall({ toolName: name, error });

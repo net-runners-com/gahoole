@@ -161,6 +161,69 @@ export const deleteFile = createTool({
   },
 });
 
+/**
+ * Running a command.
+ *
+ * Without this the model has no way to check its own work, and a model asked
+ * to "test it" that cannot run anything will describe a test run it never
+ * performed — which is worse than refusing. So it gets to run things, under
+ * three restrictions: an allowlist of executables, an argv array with no
+ * shell (so there is no `;` or backtick to smuggle anything through), and a
+ * timeout. Approval gates it like any other mutating tool.
+ */
+const ALLOWED = new Set(
+  (process.env.GAHOOLE_COMMANDS ??
+    "node,npm,npx,python3,python,g++,gcc,clang,clang++,make,cargo,go,tsc,jest,vitest,pytest,ls,cat,echo,grep,rg,find,git,./a.out"
+  )
+    .split(",")
+    .map((c) => c.trim())
+    .filter(Boolean),
+);
+
+export const runCommand = createTool({
+  id: "run_command",
+  description:
+    "Run a program and return its output. Use to compile, run and test the code you wrote. Give the executable and its arguments separately; there is no shell, so pipes and redirection do not work.",
+  inputSchema: z.object({
+    command: z.string().describe("Executable, e.g. g++ or node"),
+    args: z.array(z.string()).optional().describe("Arguments, one per element"),
+  }),
+  outputSchema: z.object({
+    stdout: z.string(),
+    stderr: z.string(),
+    code: z.number(),
+  }),
+  execute: async ({ command, args }) => {
+    const argv = args ?? [];
+    const base = path.basename(command);
+    if (!ALLOWED.has(command) && !ALLOWED.has(base)) {
+      throw new Error(
+        `${command} is not in the allowed commands (${[...ALLOWED].slice(0, 8).join(", ")}…)`,
+      );
+    }
+    // Relative executables such as ./a.out must stay inside the project.
+    const exe = command.includes("/") ? resolveInRoot(command) : command;
+
+    const { execFile } = await import("node:child_process");
+    return await new Promise((resolve, reject) => {
+      execFile(
+        exe,
+        argv,
+        { cwd: ROOT, timeout: 60_000, maxBuffer: 1 << 20 },
+        (err, stdout, stderr) => {
+          const cap = (t: string) =>
+            t.length > 8000 ? `${t.slice(0, 8000)}\n… [truncated]` : t;
+          // A non-zero exit is a result, not a failure to report — a failing
+          // test is exactly what the model needs to see.
+          const code = (err as { code?: number } | null)?.code;
+          if (err && code === undefined) return reject(err);
+          resolve({ stdout: cap(stdout), stderr: cap(stderr), code: code ?? 0 });
+        },
+      );
+    });
+  },
+});
+
 /** Kept separate from write_file: notes are the agent's own scratch space. */
 export const writeNote = createTool({
   id: "write_note",
@@ -229,6 +292,7 @@ export const tools = {
   edit_file: editFile,
   delete_file: deleteFile,
   list_files: listFiles,
+  run_command: runCommand,
   write_note: writeNote,
 };
 
@@ -238,4 +302,5 @@ export const MUTATING = new Set([
   "edit_file",
   "delete_file",
   "write_note",
+  "run_command",
 ]);

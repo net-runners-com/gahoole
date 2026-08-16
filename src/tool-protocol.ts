@@ -19,6 +19,31 @@
 export const CALL_PREFIX = "TOOL_CALL:";
 export const RESULT_PREFIX = "TOOL_RESULT:";
 
+/**
+ * File contents do not survive JSON written by a language model. Asked to
+ * write a C++ program, it produced
+ * `{"content":"std::cout << "FizzBuzz\n";"}` — unescaped quotes inside the
+ * string, invalid JSON, silently no call. So the JSON carries only short
+ * scalars and the payload goes in a delimited block after it, where quotes
+ * and newlines need no escaping at all.
+ *
+ *   TOOL_CALL: {"tool":"write_file","input":{"path":"a.cpp"}}
+ *   TOOL_BODY:
+ *   #include <iostream>
+ *   TOOL_END
+ */
+export const BODY_PREFIX = "TOOL_BODY:";
+export const BODY_SUFFIX = "TOOL_END";
+
+/**
+ * ...and the block has to be a fenced one, because plain text is not safe
+ * either. The page renders the answer as markdown, so `<iostream>` written in
+ * prose is parsed as an unknown HTML element and vanishes before it can be
+ * read back — which is why the first C++ file this wrote began `#include `
+ * with nothing after it. Inside a code fence the same text survives intact.
+ */
+const FENCE_RE = /```[^\n]*\n([\s\S]*?)```/;
+
 /** Leaves room for the instruction that follows the result. */
 const MAX_RESULT = 6000;
 
@@ -40,6 +65,12 @@ const CALL_LINE_RE = /^[\s>*_`]*TOOL_CALL:[ \t*_`]*\{.*\}[ \t*_`]*\n?/gm;
 export interface ParsedCall {
   tool: string;
   input: unknown;
+}
+
+/** A marker line that was meant to be a call but could not be read as one. */
+export interface MalformedCall {
+  line: string;
+  reason: string;
 }
 
 export interface ToolSpec {
@@ -96,9 +127,25 @@ export function buildPreamble(tools: ToolSpec[]): string {
     "followed by JSON naming the tool and its input:",
     `${CALL_PREFIX} {"tool":"read_file","input":{"path":"README.md"}}`,
     "",
-    "Write it as plain text, not in a code block, and stop there and wait.",
+    "Write it as plain text, not in a code block, and end your reply there.",
+    "",
+    "For file contents, leave `content` out of the JSON and put the text in a",
+    "fenced code block on the next line. Quotes, newlines and angle brackets",
+    "all survive there, and none of them survive anywhere else:",
+    `${CALL_PREFIX} {"tool":"write_file","input":{"path":"main.cpp"}}`,
+    "```cpp",
+    "#include <iostream>",
+    "```",
     `I will reply with a ${RESULT_PREFIX} line containing the output, and then`,
     "you continue. If no tool is needed, just answer normally.",
+    "",
+    "Two things to get right:",
+    "- Do not say you are going to use a tool. Emit the line instead. A reply",
+    "  that announces a tool without the line does nothing at all.",
+    "- Never write the output of a tool you have not run, and never describe a",
+    "  result you have not been given. If you need it, call the tool.",
+    "- Keep going until the task is done. Do not stop to ask permission for",
+    "  steps the task already implies.",
   ].join("\n");
 }
 
@@ -120,21 +167,56 @@ export function buildReminder(tools: ToolSpec[]): string {
   ].join(" ");
 }
 
+const BODY_RE = new RegExp(
+  `^[\\s>*_\`]*${BODY_PREFIX}[ \\t]*\\n([\\s\\S]*?)\\n[\\s>*_\`]*${BODY_SUFFIX}[ \\t]*$`,
+  "m",
+);
+
+/** The body block, if the reply carries one: a fence, or the marker pair. */
+export function parseBody(text: string): string | undefined {
+  return text.match(FENCE_RE)?.[1]?.replace(/\n$/, "") ?? text.match(BODY_RE)?.[1];
+}
+
 export function parseCalls(text: string): ParsedCall[] {
+  const body = parseBody(text);
   const calls: ParsedCall[] = [];
   for (const m of text.matchAll(CALL_RE)) {
     const json = m[1];
     if (!json) continue;
     try {
       const parsed = JSON.parse(json) as { tool?: unknown; input?: unknown };
-      if (typeof parsed.tool === "string") {
-        calls.push({ tool: parsed.tool, input: parsed.input ?? {} });
-      }
+      if (typeof parsed.tool !== "string") continue;
+      const input = (parsed.input ?? {}) as Record<string, unknown>;
+      // The block supplies the field the model was told to leave out.
+      if (body !== undefined && input.content === undefined) input.content = body;
+      calls.push({ tool: parsed.tool, input });
     } catch {
-      // A malformed call is treated as prose; the model gets told below.
+      // Reported by parseMalformed rather than swallowed here.
     }
   }
   return calls;
+}
+
+/**
+ * Marker lines that could not be parsed. Silently treating these as prose is
+ * how a turn ends having done nothing while claiming otherwise — the model
+ * gets told, and fixes it far more often than not.
+ */
+export function parseMalformed(text: string): MalformedCall[] {
+  const bad: MalformedCall[] = [];
+  for (const m of text.matchAll(CALL_RE)) {
+    const json = m[1];
+    if (!json) continue;
+    try {
+      const parsed = JSON.parse(json) as { tool?: unknown };
+      if (typeof parsed.tool !== "string") {
+        bad.push({ line: json.slice(0, 120), reason: 'no "tool" field' });
+      }
+    } catch (e) {
+      bad.push({ line: json.slice(0, 120), reason: (e as Error).message });
+    }
+  }
+  return bad;
 }
 
 /** The answer with the marker lines removed, for showing to the user. */
