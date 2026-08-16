@@ -57,6 +57,56 @@ step is finished, end your reply with DONE. If it turns out to be unnecessary
 say SKIP, and if you cannot do it say FAILED and why. If doing it revealed
 another step that is needed, add a line starting NEXT: describing it.`;
 
+const CONTINUE_PROMPT = (goal: string) => `Goal: ${goal}
+
+Is every part of that goal actually done — not described, not planned, but
+done, with the tools?
+
+If anything is left, do the next piece now with a tool call and say nothing
+else. If it is genuinely all done, reply with DONE and one sentence saying
+what the result was.`;
+
+/**
+ * Keep asking for the next piece until the model says it is finished.
+ *
+ * The stopping condition is the model's own DONE, which is why the prompt
+ * spells out that describing is not doing — left vaguer, a model reports
+ * completion at the first summary it writes.
+ */
+async function continueUntilDone(
+  goal: string,
+  first: string,
+  deps: AutoDeps,
+  maxSteps: number,
+): Promise<AutoResult> {
+  const tasks: Task[] = [{ id: 1, title: goal, status: "doing" }];
+  deps.onPlan?.(tasks);
+
+  if (/\bDONE\b/.test(first)) {
+    tasks[0]!.status = "done";
+    deps.onPlan?.(tasks);
+    return { tasks, steps: 0, stopped: "complete" };
+  }
+
+  for (let steps = 1; steps <= maxSteps; steps++) {
+    let text: string;
+    try {
+      text = await deps.run(CONTINUE_PROMPT(goal));
+    } catch (e) {
+      tasks[0]!.status = "failed";
+      tasks[0]!.note = e instanceof Error ? e.message.slice(0, 80) : String(e);
+      deps.onPlan?.(tasks);
+      return { tasks, steps, stopped: "stuck" };
+    }
+    if (/\bDONE\b/.test(text) || /\b完了\b/.test(text)) {
+      tasks[0]!.status = "done";
+      deps.onPlan?.(tasks);
+      return { tasks, steps, stopped: "complete" };
+    }
+  }
+  return { tasks, steps: maxSteps, stopped: "budget" };
+}
+
 export async function runAutonomously(
   goal: string,
   deps: AutoDeps,
@@ -67,11 +117,12 @@ export async function runAutonomously(
   const tasks = parsePlan(planText);
 
   if (tasks.length === 0) {
-    // No list came back — the reply is the answer, and forcing a plan out of
-    // it would spend queries to learn the same thing.
-    log(`\x1b[2m  no plan came back; treating the reply as the answer\x1b[0m`);
-    log(planText);
-    return { tasks, steps: 0, stopped: "complete" };
+    // No list came back. That is not the same as being finished: the
+    // benchmark's autonomy failures all looked like this — a turn that did
+    // part of the job and then summarised. So instead of accepting the reply,
+    // ask whether the goal is actually met, and keep going while it is not.
+    log(`\x1b[2m  no plan came back; checking whether the goal is met\x1b[0m`);
+    return continueUntilDone(goal, planText, deps, maxSteps);
   }
 
   deps.onPlan?.(tasks);

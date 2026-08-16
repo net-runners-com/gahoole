@@ -37,6 +37,28 @@ import {
  * Deliberately narrow — it wants an announcement ("I will use write_file"),
  * not a passing mention, because a false positive spends a query.
  */
+/**
+ * Does the reply claim work that no tool call could have done?
+ *
+ * This is the failure the benchmark surfaced most often: a turn that spends
+ * zero tool calls and reports the job finished. Reasoning alone reached 3/3
+ * on questions and 1/3 on tasks, and every one of those failures had an empty
+ * tool count — so the gap is not capability, it is acting rather than
+ * describing.
+ */
+function claimsWork(answer: string): boolean {
+  return /(作成しました|書き込みました|保存しました|実行しました|修正しました|完了しました|削除しました|created|wrote|saved|executed|compiled|I have (written|created|run))/i.test(
+    answer,
+  );
+}
+
+/** Does the request need something done, rather than answered? */
+export function needsAction(prompt: string): boolean {
+  return /(作って|作成|書いて|書き込|保存|実行して|コンパイル|直して|修正|削除|並べ替え|数えて|確認して|write|create|save|run |compile|fix |delete|append|read the file)/i.test(
+    prompt,
+  );
+}
+
 function announcesTool(answer: string, tools: string[]): boolean {
   const named = tools.some((t) => answer.includes(t));
   if (!named) return false;
@@ -91,6 +113,7 @@ export class ToolLoop implements Backend {
     let answer = await this.inner.ask(`${head}\n\n${prompt}`, attachments);
 
     let nudged = false;
+    let ran = 0;
     for (let i = 0; i < this.maxIterations; i++) {
       const calls = parseCalls(answer);
 
@@ -118,9 +141,21 @@ export class ToolLoop implements Backend {
           );
           continue;
         }
+
+        // Or it reports the work done having called nothing at all — the
+        // benchmark's most common failure, and the one a user is least likely
+        // to catch, because the reply reads exactly like success.
+        if (!nudged && ran === 0 && (claimsWork(answer) || needsAction(prompt))) {
+          nudged = true;
+          answer = await this.inner.ask(
+            `No tool ran, so nothing actually happened — anything you reported is a guess. Do it for real now: emit one ${"TOOL_CALL:"} line and nothing else. If the task genuinely needs no tool, say why in one sentence.`,
+          );
+          continue;
+        }
         return stripCalls(answer);
       }
 
+      ran += calls.length;
       const results: string[] = [];
       for (const call of calls) {
         results.push(formatResult(call.tool, await this.#run(call.tool, call.input)));

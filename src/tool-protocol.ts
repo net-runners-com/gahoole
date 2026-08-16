@@ -162,8 +162,8 @@ export function buildReminder(tools: ToolSpec[]): string {
   const names = tools.map((t) => `${t.name}(${t.params.join(",")})`).join(", ");
   return [
     `[Tools you can run here: ${names}.`,
-    `If one of them answers this, reply with a single ${CALL_PREFIX} line and nothing else — do not search the web and do not guess the output.`,
-    "Otherwise answer normally.]",
+    `If this asks you to create, change, delete, run or inspect anything, you must call a tool — describing it does not do it, and you cannot know a file's contents or a program's output without reading or running it.`,
+    `Reply with a single ${CALL_PREFIX} line and nothing else. Do not search the web. If the request is only a question, answer it normally.]`,
   ].join(" ");
 }
 

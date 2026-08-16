@@ -118,13 +118,31 @@ const script = (replies: string[]) => {
   assert.match(r.tasks[0]?.note ?? "", /rate_limit/);
 }
 
-// No list means the reply was the answer, and no queries are spent forcing one.
+// No list is not the same as finished: the run asks whether the goal is met
+// and keeps going while it is not.
 {
-  const s = script(["It is 42."]);
+  const s = script(["書きました。", "並べ替えました。", "確認しました。DONE"]);
+  const r = await runAutonomously("整列して保存する", { run: s.run });
+  assert.equal(r.stopped, "complete");
+  assert.equal(r.steps, 2, "two more turns before it said DONE");
+  assert.ok(s.seen[1]?.includes("not described, not planned"));
+}
+
+// A first reply that already says DONE spends nothing further.
+{
+  const s = script(["It is 42. DONE"]);
   const r = await runAutonomously("what is the answer?", { run: s.run });
   assert.equal(r.stopped, "complete");
   assert.equal(r.steps, 0);
   assert.equal(s.seen.length, 1);
+}
+
+// And a model that never says DONE is bounded.
+{
+  const s = script(["a", "b", "c", "d", "e", "f"]);
+  const r = await runAutonomously("go", { run: s.run, maxSteps: 3 });
+  assert.equal(r.stopped, "budget");
+  assert.equal(r.steps, 3);
 }
 
 assert.ok(renderPlan([{ id: 1, title: "x", status: "done" }], false).includes("✓ 1. x"));

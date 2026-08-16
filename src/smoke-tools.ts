@@ -238,6 +238,33 @@ const tools = {
   );
 }
 
+// A turn that reports work while calling nothing is the benchmark's most
+// common failure, and reads exactly like success. It gets one demand for the
+// real thing.
+{
+  const stub = new StubBackend([
+    "fizzbuzz.cpp を作成しました。出力は 1 2 Fizz です。",
+    'TOOL_CALL: {"tool":"read_file","input":{"path":"a.txt"}}',
+    "Done.",
+  ]);
+  const loop = new ToolLoop(stub, tools, lifecycle);
+  loop.reset();
+  assert.equal(await inTurn(() => loop.ask("ファイルを作って")), "Done.");
+  assert.ok(
+    stub.prompts[1]?.includes("nothing actually happened"),
+    "the model is told the report was a guess",
+  );
+}
+
+// An answer to a plain question is not nudged, however confident it sounds.
+{
+  const stub = new StubBackend(["12 です。"]);
+  const loop = new ToolLoop(stub, tools, lifecycle);
+  loop.reset();
+  await inTurn(() => loop.ask("アリスはボブより3歳年上です。ボブは何歳？"));
+  assert.equal(stub.prompts.length, 1, "no nudge for a question");
+}
+
 // A malformed marker line gets one correction request.
 {
   const stub = new StubBackend([

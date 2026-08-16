@@ -128,6 +128,34 @@ All four take the same path — end the current session, start the next one with
 `source` marker naming what it came from — so a hook can always tell why a
 session boundary happened.
 
+## Benchmark
+
+`npm run bench` runs nine tasks in three groups, each checked by code rather
+than by reading the reply.
+
+| Group | Before | After | Note |
+|---|---|---|---|
+| reasoning (no tools) | 3/3 | 2/3 | unchanged by the fix; run-to-run variance |
+| problem solving | 1/3 | **3/3** | |
+| autonomy (dependent steps) | 1–2/3 | **3/3** | 8/8 steps unaided |
+
+The fix came from the per-task detail, not the headline: every failure had
+spent **zero tool calls** and answered from reasoning instead of acting.
+Reasoning was already 3/3, so the gap was never capability — it was doing
+rather than describing. Two changes followed. A turn that reports work while
+calling nothing now gets one demand for the real thing, and an autonomous run
+that produces no plan asks whether the goal is *actually* met and keeps going
+while it is not, rather than accepting the first summary.
+
+The cost is turns: autonomy went from 1 turn and 20s per task to 4.7 turns
+and 105s. Each of those turns is a query against a limit of roughly eighty
+per ten minutes.
+
+**Read these numbers as nine tasks written by the same person who wrote the
+agent.** The same group scored 2/3 and 1/3 on consecutive runs before the
+fix, and reasoning scored 3/3 then 2/3 after it with no relevant change in
+between — a single pass has an error bar of about a task.
+
 ## Storage
 
 The browser profile for the `ai-mode` backend lives in `data/browser-profile`;
