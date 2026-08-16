@@ -18,7 +18,8 @@
     "smoke:spinner": "tsx src/smoke-spinner.ts",
     "smoke:files": "tsx src/smoke-files.ts",
     "smoke:subagent": "tsx src/smoke-subagent.ts",
-    "smoke:auto": "tsx src/smoke-auto.ts"
+    "smoke:auto": "tsx src/smoke-auto.ts",
+    "bench": "tsx src/bench.ts"
   },
   "dependencies": {
     "@mastra/core": "^1.59.0",
