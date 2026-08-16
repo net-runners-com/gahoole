@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Lifecycle } from "../lifecycle.js";
 import { mcpServerOf } from "../mcp.js";
+import { log, logError } from "../output.js";
 
 const LOG = path.resolve("data/events.jsonl");
 
@@ -44,19 +45,19 @@ export function registerJsonlLog(lifecycle: Lifecycle): void {
 export function registerConsoleTrace(lifecycle: Lifecycle): void {
   lifecycle
     .on("SessionStart", (e) =>
-      console.log(
+      log(
         `\x1b[2m● session ${e.sessionId.slice(0, 8)}${e.source ? ` (${e.source.kind} of ${e.source.from.slice(0, 8)})` : ""}\x1b[0m`,
       ),
     )
     .on("SessionEnd", (e) =>
-      console.log(
+      log(
         `\x1b[2m○ session ${e.sessionId.slice(0, 8)} ended: ${e.reason} · ${e.turns} turns · ${(e.ms / 1000).toFixed(1)}s\x1b[0m`,
       ),
     )
     .on("PreToolUse", (e) => {
       const input = JSON.stringify(e.input) ?? "";
       const shown = input.length > 120 ? `${input.slice(0, 117)}…` : input;
-      console.log(`\x1b[2m  ├ ${e.toolName} ${shown}\x1b[0m`);
+      log(`\x1b[2m  ├ ${e.toolName} ${shown}\x1b[0m`);
     })
     .on("PostToolUse", (e) => {
       // A denial arrives here as an ordinary output — surface it as its own
@@ -64,22 +65,18 @@ export function registerConsoleTrace(lifecycle: Lifecycle): void {
       const denied = (e.output as { denied?: boolean } | undefined)?.denied;
       const status = e.error ? "failed" : denied ? "denied" : "ok";
       const color = e.error ? "\x1b[31m" : denied ? "\x1b[33m" : "\x1b[2m";
-      console.log(`${color}  └ ${e.toolName} ${status} · ${e.ms}ms\x1b[0m`);
+      log(`${color}  └ ${e.toolName} ${status} · ${e.ms}ms\x1b[0m`);
     })
     .on("Stop", (e) =>
-      console.log(
+      log(
         `\x1b[2m  turn done · ${e.toolCalls} tool calls · ${(e.ms / 1000).toFixed(1)}s\x1b[0m`,
       ),
     )
     .on("StopFailure", (e) =>
-      console.error(`\x1b[31m  turn failed: ${e.error.message}\x1b[0m`),
+      logError(`\x1b[31m  turn failed: ${e.error.message}\x1b[0m`),
     );
 }
 
-/**
- * A PreToolUse hook that can stop a call. This is the one place in the
- * lifecycle where a hook changes the outcome instead of observing it.
- */
 /**
  * The reason MCP tools go through the same hook path as local ones: a policy
  * written once applies to third-party tools you did not author and cannot
@@ -116,6 +113,10 @@ export function registerMcpPolicy(
   });
 }
 
+/**
+ * A PreToolUse hook that stops a call outright — the one place in the
+ * lifecycle where a hook changes the outcome instead of observing it.
+ */
 export function registerWriteGuard(lifecycle: Lifecycle): void {
   lifecycle.on("PreToolUse", (e) => {
     if (e.toolName !== "write_note") return;

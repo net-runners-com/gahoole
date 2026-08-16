@@ -31,6 +31,18 @@ assert.equal(
   classifyFailure(new Error("prompt is too long for context")).kind,
   "context",
 );
+assert.equal(
+  classifyFailure(new Error("context window exceeded")).kind,
+  "context",
+);
+// A browser failure carries "Context" in a method name and must not be filed
+// as a context overflow.
+assert.equal(
+  classifyFailure(
+    new Error("browserType.launchPersistentContext: profile already in use"),
+  ).kind,
+  "other",
+);
 assert.equal(classifyFailure(new Error("ENOENT")).kind, "other");
 
 // SDKs wrap the real error; the classifier has to look through one layer.

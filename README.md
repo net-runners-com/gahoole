@@ -31,6 +31,8 @@ npm run dev            # or: npm link && gahoole
 | `npm run smoke` | hook dispatch, PreToolUse deny, Pre/Post pairing, session store | no |
 | `npm run smoke:mcp` | MCP connect, namespacing, policy denial | local only |
 | `npm run smoke:handoff` | failure classification, digest without a model, carry-over | no |
+| `npm run smoke:tools` | marker parsing, denial, iteration cap | no |
+| `npm run smoke:spinner` | frames, label changes, sharing the line | no |
 | `npm run smoke:aimode` | two real AI Mode turns, context preserved | **yes** |
 | `npm run demo` | a scripted run through every scope, printing the audit trail | local only |
 

@@ -11,6 +11,8 @@ import {
   registerWriteGuard,
 } from "./hooks/logging.js";
 import { connectMcp } from "./mcp.js";
+import { Spinner } from "./spinner.js";
+import { bindLineOwner } from "./output.js";
 import { formatSessions, SessionStore } from "./sessions.js";
 import { HandoffStore } from "./handoff.js";
 import { banner, readVersion, statusLine, type BannerInfo } from "./banner.js";
@@ -185,6 +187,17 @@ async function main(): Promise<void> {
   // Traced from here on: the opening session is already named in the panel,
   // and tracing it would print above the box.
   registerConsoleTrace(lifecycle);
+
+  // The spinner is driven entirely by the lifecycle, so its label is whatever
+  // is actually happening rather than a guess made at the call site.
+  const spinner = new Spinner();
+  bindLineOwner(spinner);
+  lifecycle
+    .on("UserPromptSubmit", () => spinner.start("thinking"))
+    .on("PreToolUse", (e) => spinner.label(`running ${e.toolName}`))
+    .on("PostToolUse", () => spinner.label("thinking"))
+    .on("Stop", () => spinner.stop())
+    .on("StopFailure", () => spinner.stop());
 
   // Reprinted whenever the session changes, so the id under the cursor is
   // always the one the next question will go to.

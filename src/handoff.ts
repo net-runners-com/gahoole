@@ -88,7 +88,14 @@ export function classifyFailure(error: unknown): FailureClass {
   if (status === 529 || status === 503 || /overloaded/.test(message)) {
     return { kind: "overloaded", status, retryAfterMs };
   }
-  if (/context|max_tokens|too long|token limit/.test(message)) {
+  // Deliberately narrow: a bare /context/ also matches
+  // `launchPersistentContext`, and a browser that failed to start would be
+  // filed as a context overflow and trigger a handoff.
+  if (
+    /context (length|window|limit)|maximum context|max_tokens|prompt is too long|token limit/.test(
+      message,
+    )
+  ) {
     return { kind: "context", status };
   }
   // Some SDK errors wrap the real one.

@@ -14,7 +14,8 @@
     "build": "tsc",
     "prepare": "npm run build",
     "smoke:aimode": "tsx src/smoke-aimode.ts",
-    "smoke:tools": "tsx src/smoke-tools.ts"
+    "smoke:tools": "tsx src/smoke-tools.ts",
+    "smoke:spinner": "tsx src/smoke-spinner.ts"
   },
   "dependencies": {
     "@mastra/core": "^1.59.0",
