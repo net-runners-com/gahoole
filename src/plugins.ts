@@ -230,6 +230,8 @@ export function createSkillTool(
   plugins: Plugin[],
   createTool: typeof import("@mastra/core/tools").createTool,
   z: typeof import("zod").z,
+  /** Told which skill was chosen, so the caller can run it to completion. */
+  onSelect?: (skill: Skill, args: string) => void,
 ) {
   const skills = allSkills(plugins);
   if (skills.length === 0) return undefined;
@@ -254,7 +256,7 @@ export function createSkillTool(
       name: z.string().describe("Which skill"),
       args: z.string().optional().describe("What the skill should work on"),
     }),
-    outputSchema: z.object({ skill: z.string(), instructions: z.string() }),
+    outputSchema: z.object({ skill: z.string(), note: z.string() }),
     execute: async (input: { name: string; args?: unknown }) => {
       const skill = findSkill(plugins, input.name);
       if (!skill) {
@@ -270,17 +272,21 @@ export function createSkillTool(
           : input.args
             ? JSON.stringify(input.args)
             : "";
+      // The instructions are not returned here.
+      //
+      // They were, and the turn read them as reference material rather than
+      // as a task: measured runs stopped after two calls, then six, then
+      // thirteen, having written the spec and never built anything. Choosing
+      // a skill and carrying one out are different jobs, so they are done by
+      // different things — this call is the choice, and the caller runs the
+      // steps afterwards with the loop that exists for work that has to
+      // finish.
+      onSelect?.(skill, args);
       return {
         skill: skill.name,
-        // Said in the result, because of where the result lands. A skill
-        // invoked by name arrives as the question and is followed; the same
-        // text arriving as a tool result reads as reference material, and
-        // measured runs stopped halfway through it. The difference is not the
-        // words but what they are framed as, so the frame is stated.
-        instructions:
-          `These are your instructions for this task. Carry them out now, ` +
-          `step by step, using the tools — do not summarise them and do not ` +
-          `ask which step to start with.\n\n${skillPrompt(skill, args)}`,
+        note:
+          `Selected. Its steps will be carried out next — stop here rather ` +
+          `than starting them yourself.`,
       };
     },
   });

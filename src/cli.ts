@@ -223,10 +223,20 @@ async function main(): Promise<void> {
   // conversation. The tool is added to the same map it delegates, so a
   // subagent inherits every tool except the one that spawns more.
   // Skills, reachable from a question rather than only from a typed command.
+  // The tool records the choice; the run happens after the turn, below.
+  // A box rather than a binding: the only assignment happens inside a
+  // callback, and TypeScript narrows a plain `let` to `never` at the point it
+  // is read because it cannot see that the callback ran.
+  const picked: { current?: { skill: Skill; args: string } } = {};
   {
     const { createTool } = await import("@mastra/core/tools");
     const { z } = await import("zod");
-    const skillTool = createSkillTool(plugins, createTool, z);
+    const skillTool = createSkillTool(plugins, createTool, z, (skill, args) => {
+      // The first choice, not the last. A turn asked for four skills in a
+      // row — doc-new twice, then doc-build, then doc — and taking the last
+      // one ran the reference skill instead of the one that makes the file.
+      picked.current ??= { skill, args };
+    });
     if (skillTool) allTools["use_skill"] = skillTool;
   }
 
@@ -445,7 +455,11 @@ async function main(): Promise<void> {
    * afterwards whatever happened — a skill that failed halfway must not leave
    * the session holding a tool set nobody chose.
    */
-  const runSkill = async (skill: Skill, args: string): Promise<void> => {
+  const runSkill = async (
+    skill: Skill,
+    args: string,
+    opts: { autonomous?: boolean } = {},
+  ): Promise<void> => {
     const wanted = skill.tools;
     if (loop) {
       // A skill is a procedure, not a question: read the reference, look at
@@ -465,9 +479,26 @@ async function main(): Promise<void> {
       console.log(`${DIM}  ${skill.plugin}/${skill.name}${RESET}`);
     }
     try {
-      const text = await session.run(skillPrompt(skill, args));
-      const left = stream.started ? remainder(text, shown) : text;
-      if (left) console.log(`${stream.started ? "" : "\n"}${left}\n`);
+      if (opts.autonomous) {
+        // A skill is a procedure and a procedure has to finish. Sent as one
+        // turn it stopped early and variably — after two calls, then six,
+        // then thirteen — so it goes through the loop that keeps asking until
+        // the thing it produces exists.
+        const result = await runAutonomously(skillPrompt(skill, args), {
+          maxSteps: 6,
+          run: (p) => session.run(p),
+          onPlan: (tasks) =>
+            console.log(`\n${renderPlan(tasks, !process.env.NO_COLOR)}\n`),
+        });
+        const done = result.tasks.filter((t) => t.status === "done").length;
+        console.log(
+          `${DIM}  ${result.stopped} · ${done}/${result.tasks.length} done · ${result.steps} steps${RESET}\n`,
+        );
+      } else {
+        const text = await session.run(skillPrompt(skill, args));
+        const left = stream.started ? remainder(text, shown) : text;
+        if (left) console.log(`${stream.started ? "" : "\n"}${left}\n`);
+      }
     } catch (e) {
       console.error(`\x1b[31m${e instanceof Error ? e.message : String(e)}\x1b[0m\n`);
     } finally {
@@ -781,6 +812,7 @@ async function main(): Promise<void> {
         }
         stream.reset();
         shown.length = 0;
+        picked.current = undefined;
         const text = await session.run(
           prompt || "この画像について説明してください。",
           undefined,
@@ -793,6 +825,13 @@ async function main(): Promise<void> {
         const left = stream.started ? remainder(text, shown) : text;
         if (left) console.log(`${stream.started ? "" : "\n"}${left}\n`);
         else if (stream.started) console.log("");
+
+        // The turn chose a skill; now carry it out.
+        if (picked.current) {
+          const { skill, args } = picked.current;
+          picked.current = undefined;
+          await runSkill(skill, args, { autonomous: true });
+        }
       } catch (e) {
         // StopFailure already fired; a failed turn does not end the session.
         console.error(`\x1b[31m${e instanceof Error ? e.message : e}\x1b[0m\n`);
