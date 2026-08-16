@@ -13,7 +13,7 @@ import {
 import { connectMcp } from "./mcp.js";
 import { formatSessions, SessionStore } from "./sessions.js";
 import { HandoffStore } from "./handoff.js";
-import { banner, readVersion } from "./banner.js";
+import { banner, readVersion, statusLine, type BannerInfo } from "./banner.js";
 import { backendKind, createBackend, type Backend } from "./backends/index.js";
 import { ToolLoop } from "./tool-loop.js";
 import { tools as localTools } from "./tools.js";
@@ -76,7 +76,6 @@ async function main(): Promise<void> {
 
   const lifecycle = new Lifecycle();
   registerJsonlLog(lifecycle);
-  registerConsoleTrace(lifecycle);
   registerWriteGuard(lifecycle);
 
   const opened: string[] = [];
@@ -171,23 +170,27 @@ async function main(): Promise<void> {
     },
   });
 
-  if (!argv.includes("--no-banner")) {
-    stdout.write(
-      banner({
-        version: readVersion(),
-        model: kind === "ai-mode" ? backend.name : MODEL,
-        cwd: process.cwd(),
-        sessionId: session.id,
-        origin: startId
-          ? "resumed"
-          : carriedOver
-            ? "carried over"
-            : undefined,
-        tools: Object.keys(allTools).length,
-        mcpServers: mcp.servers.length,
-      }),
-    );
-  }
+  const info = (): BannerInfo => ({
+    version: readVersion(),
+    model: kind === "ai-mode" ? backend.name : MODEL,
+    cwd: process.cwd(),
+    sessionId: session.id,
+    origin: startId ? "resumed" : carriedOver ? "carried over" : undefined,
+    tools: Object.keys(allTools).length,
+    mcpServers: mcp.servers.length,
+  });
+
+  if (!argv.includes("--no-banner")) stdout.write(banner(info()));
+
+  // Traced from here on: the opening session is already named in the panel,
+  // and tracing it would print above the box.
+  registerConsoleTrace(lifecycle);
+
+  // Reprinted whenever the session changes, so the id under the cursor is
+  // always the one the next question will go to.
+  const showStatus = () => {
+    if (stdin.isTTY) console.log(statusLine(info(), !process.env.NO_COLOR));
+  };
 
   const interactive = stdin.isTTY;
   const rl = interactive
@@ -281,6 +284,7 @@ async function main(): Promise<void> {
                 break;
               }
               session = await session.resume(await sessions.resolve(arg));
+              showStatus();
               break;
             }
 
@@ -291,11 +295,13 @@ async function main(): Promise<void> {
                 break;
               }
               session = await session.resume(latest.id);
+              showStatus();
               break;
             }
 
             case "clear": {
               session = await session.clear();
+              showStatus();
               // /clear is also how you pick up a handoff without restarting.
               const waiting = handoffs.take();
               if (waiting) {
@@ -310,11 +316,13 @@ async function main(): Promise<void> {
 
             case "fork":
               session = await session.fork();
+              showStatus();
               break;
 
             case "compact": {
               const { next, summary } = await session.compact();
               session = next;
+              showStatus();
               console.log(`\x1b[2m${summary}\x1b[0m\n`);
               break;
             }

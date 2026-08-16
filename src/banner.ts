@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { center, renderBox } from "./tui.js";
 
 /**
  * Startup banner.
@@ -24,6 +25,13 @@ const WORDMARK = [
   " ██████  ██   ██ ██   ██  ██████   ██████  ███████ ███████",
 ];
 
+/** Small mark for the panel, where the full wordmark will not fit. */
+const MARK = [
+  "▄▄▄ ▄  ▄ ▄▄▄ ▄▄▄ ▄   ▄▄▄",
+  "█ █ █▄▄█ █ █ █ █ █   █▄ ",
+  "▀▄▀ ▀  ▀ ▀▄▀ ▀▄▀ ▀▄▄ ▀▄▄",
+];
+
 const RESET = "\x1b[0m";
 const DIM = "\x1b[2m";
 const BOLD = "\x1b[1m";
@@ -38,6 +46,8 @@ export interface BannerInfo {
   origin?: string;
   tools: number;
   mcpServers: number;
+  /** Shown in the greeting; falls back to the OS user. */
+  user?: string;
 }
 
 export function readVersion(): string {
@@ -72,38 +82,70 @@ export function renderBanner(
   const { columns, color } = opts;
   const c = (code: string, text: string) => colorize(color, code, text);
 
-  const facts = [
-    `v${info.version}`,
-    info.model,
-    info.tools === 0
-      ? "no tool calling"
-      : `${info.tools} tools${info.mcpServers ? ` (${info.mcpServers} mcp)` : ""}`,
-    shortenPath(info.cwd),
-  ].join(" · ");
-
-  const session = `session ${info.sessionId.slice(0, 8)}${
-    info.origin ? ` · ${info.origin}` : ""
-  }`;
+  const user = info.user ?? os.userInfo().username;
 
   // < 40 columns: a single line, no art.
   if (columns < 40) {
     return `${c(BOLD, "gahoole")} ${c(DIM, `v${info.version}`)}\n`;
   }
 
-  // < 72 columns: the wordmark would wrap, so drop to a stacked header.
-  if (columns < 72) {
-    return (
-      [
-        c(AMBER, "gahoole"),
-        c(DIM, `  v${info.version} · ${info.model}`),
-        c(DIM, `  ${shortenPath(info.cwd)}`),
-        c(DIM, `  ${session}`),
-      ].join("\n") + "\n"
-    );
-  }
+  const toolLine =
+    info.tools === 0
+      ? "no tools"
+      : `${info.tools} tools${info.mcpServers ? ` · ${info.mcpServers} mcp` : ""}`;
 
-  const art = WORDMARK.map((row) => c(AMBER, row)).join("\n");
-  return `${art}\n\n  ${c(DIM, facts)}\n  ${c(DIM, session)}\n`;
+  const left = [
+    c(BOLD, `Welcome back ${user}!`),
+    "",
+    ...MARK.map((row) => c(AMBER, row)),
+    "",
+    c(DIM, `${info.model} · ${toolLine}`),
+    c(DIM, shortenPath(info.cwd)),
+    c(
+      DIM,
+      `session ${info.sessionId.slice(0, 8)}${info.origin ? ` · ${info.origin}` : ""}`,
+    ),
+  ];
+
+  const right = [
+    c(BOLD, "Getting started"),
+    "/help lists the session commands",
+    "/sessions switches between conversations",
+    "",
+    c(BOLD, "Worth knowing"),
+    "AI Mode has no API, so answers come from a",
+    "browser and are rate limited at roughly 80",
+    "questions per 10 minutes. When it stops, the",
+    "conversation is saved and the next session",
+    "picks it up.",
+  ];
+
+  const box = renderBox({
+    title: `gahoole v${info.version}`,
+    left,
+    right,
+    columns,
+    accent: color ? AMBER : "",
+  });
+
+  // Wide enough to put the full wordmark above the panel.
+  if (columns >= 96) {
+    const art = WORDMARK.map((row) => c(AMBER, center(row, columns - 2))).join("\n");
+    return `${art}\n\n${box}\n`;
+  }
+  return `${box}\n`;
+}
+
+/** The dim line printed above the prompt when the session changes. */
+export function statusLine(info: BannerInfo, color = true): string {
+  const paint = (s: string) => (color ? `${DIM}${s}${RESET}` : s);
+  return paint(
+    [
+      info.model,
+      info.tools ? `${info.tools} tools` : "no tools",
+      `session ${info.sessionId.slice(0, 8)}`,
+    ].join(" · "),
+  );
 }
 
 /** Returns "" when stdout is not a terminal, so piped output stays clean. */
