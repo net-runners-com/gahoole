@@ -13,6 +13,7 @@ import {
   buildPreamble,
   describeTool,
   formatResult,
+  formatResults,
   parseCalls,
   parseMalformed,
   stripCalls,
@@ -43,10 +44,31 @@ assert.equal(
   "Here you go.\nDone.",
 );
 
-// A result large enough to blow past the composer's 8192-char limit is cut.
+// A result large enough to blow past the composer's limit is cut, and cut in
+// the middle: the end of a compiler's output is where it says what went wrong.
 const huge = formatResult("read_file", { output: { content: "x".repeat(20_000) } });
-assert.ok(huge.length < 8_192, `result fits the composer (${huge.length})`);
-assert.ok(huge.includes("[truncated]"));
+assert.ok(huge.length < 8_000, `result fits the composer (${huge.length})`);
+assert.ok(huge.includes("[middle cut]"));
+assert.ok(huge.trimEnd().endsWith('"}}'), "the tail survives");
+
+// Several results in one message share one budget, because they travel
+// together — a cap per result let three of them add up to more than the
+// composer accepts, and the instruction at the end was what got dropped.
+{
+  const many = formatResults([
+    { tool: "run_command", outcome: { output: { code: 0, stdout: "ok", stderr: "" } } },
+    { tool: "read_file", outcome: { output: { content: "a".repeat(20_000) } } },
+    { tool: "read_file", outcome: { output: { content: "b".repeat(20_000) } } },
+  ]);
+  const total = many.join("\n").length;
+  assert.ok(total < 8_000, `all three fit together (${total})`);
+  assert.ok(!many[0]!.includes("[middle cut]"), "the small one is untouched");
+  assert.ok(!many[0]!.includes('"stderr"'), "and an empty field is not sent at all");
+  assert.ok(
+    Math.abs(many[1]!.length - many[2]!.length) < 20,
+    "the two large ones are cut to the same size",
+  );
+}
 
 {
   // Descriptions are trimmed to their first clause; the surrounding prose is

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { launchPersistentContext } from "cloakbrowser";
+import { readConversation } from "./extract.js";
 
 /**
  * Google AI Mode (`udm=50`) as the model backend.
@@ -214,79 +215,7 @@ export class AiModeBackend {
    */
   async #conversation(): Promise<string> {
     const page = await this.#ensure();
-    // This callback is serialized and run in the page, so it is browser code
-    // in a Node project — hence the local `any` rather than pulling the whole
-    // DOM lib into tsconfig.
-    return (await page.evaluate((sel: string) => {
-      const d = (globalThis as unknown as { document: any }).document;
-      const roots = d.querySelectorAll(sel);
-      const parts: string[] = [];
-      for (const root of roots.length ? roots : [d.body]) {
-        const noise = root.querySelectorAll(
-          ".HvurC,[role=dialog],[role=navigation],a[href],textarea,button",
-        );
-
-        const prev: string[] = [];
-        noise.forEach((n: any) => {
-          prev.push(n.style.display);
-          n.style.display = "none";
-        });
-
-        // List markers live in the rendering, not in the text. A numbered list
-        // comes back as three bare sentences, because the "1." is drawn by the
-        // <ol> rather than written in the <li> — which is why an autonomous
-        // run's plan never parsed: the model wrote the list every time and the
-        // numbers were gone before anything could read them. Put them back,
-        // then take them out again so the page is left as it was found.
-        const marked: { el: any; text: string }[] = [];
-        root.querySelectorAll("li").forEach((el: any) => {
-          const ordered = el.parentElement?.tagName === "OL";
-          const siblings: any[] = Array.prototype.slice.call(
-            el.parentElement?.children ?? [],
-          );
-          const at = siblings.indexOf(el) + 1;
-          const mark = ordered ? `${at}. ` : "- ";
-          const first = el.firstChild;
-          if (first?.nodeType === 3) {
-            marked.push({ el: first, text: first.nodeValue ?? "" });
-            first.nodeValue = mark + (first.nodeValue ?? "");
-          } else {
-            const node = d.createTextNode(mark);
-            el.insertBefore(node, first ?? null);
-            marked.push({ el: node, text: "" });
-          }
-        });
-
-        let t = (root.innerText || "").replace(/\n{3,}/g, "\n\n").trim();
-
-        for (const m of marked) {
-          if (m.text) m.el.nodeValue = m.text;
-          else m.el.parentNode?.removeChild(m.el);
-        }
-
-        // Code blocks are read from the DOM rather than from innerText.
-        // innerText follows layout, and in AI Mode a rendered <pre> does not
-        // reliably appear in it — the first C++ file this wrote came out as
-        // "#include " with the header missing. textContent always has it, so
-        // the blocks are appended fenced, which is also the shape the tool
-        // protocol looks for.
-        const blocks: string[] = [];
-        root.querySelectorAll("pre").forEach((el: any) => {
-          const code = (el.textContent ?? "").trim();
-          if (code && !blocks.includes(code)) blocks.push(code);
-        });
-        for (const b of blocks) {
-          if (!t.includes(b)) t += "\n\n```\n" + b + "\n```";
-          else t = t.replace(b, "```\n" + b + "\n```");
-        }
-        noise.forEach((n: any, i: number) => {
-          n.style.display = prev[i] ?? "";
-        });
-
-        if (t) parts.push(t);
-      }
-      return parts.join("\n\n");
-    }, CONVERSATION)) as string;
+    return (await page.evaluate(readConversation, CONVERSATION)) as string;
   }
 
   /**

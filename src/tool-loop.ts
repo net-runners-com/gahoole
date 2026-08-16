@@ -6,7 +6,7 @@ import {
   buildPreamble,
   buildReminder,
   describeTool,
-  formatResult,
+  formatResults,
   parseCalls,
   parseMalformed,
   stripCalls,
@@ -234,10 +234,19 @@ export class ToolLoop implements Backend {
 
       keep(answer);
       ran += calls.length;
-      const results: string[] = [];
+      const outcomes: {
+        tool: string;
+        outcome: { output?: unknown; error?: unknown };
+      }[] = [];
       for (const call of calls) {
-        results.push(formatResult(call.tool, await this.#run(call.tool, call.input)));
+        outcomes.push({
+          tool: call.tool,
+          outcome: await this.#run(call.tool, call.input),
+        });
       }
+      // One budget for the message, not one per result: they travel together
+      // now, and the composer drops whatever does not fit.
+      const results = formatResults(outcomes);
 
       this.#queries++;
       answer = await this.inner.ask(

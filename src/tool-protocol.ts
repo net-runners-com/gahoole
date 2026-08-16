@@ -46,8 +46,18 @@ const FENCE_RE = /```[^\n]*\n([\s\S]*?)```/;
 /** The same, scanning the whole reply so each block can be placed. */
 const FENCE_G = /```[^\n]*\n([\s\S]*?)```/g;
 
-/** Leaves room for the instruction that follows the result. */
-const MAX_RESULT = 6000;
+/**
+ * What all of a message's results may take up together.
+ *
+ * The composer accepts 8000 characters and silently drops the rest, so this
+ * has to leave room for the instruction that follows. It is a budget for the
+ * whole message rather than a cap per result, because a reply may now carry
+ * several calls and their results travel together: three results capped at
+ * 6000 each came to 18000, of which the composer kept the first 8000 — cutting
+ * off the instruction at the end and leaving the model holding output with
+ * nothing asked of it.
+ */
+const RESULT_BUDGET = 7000;
 
 /**
  * Tolerant of the model decorating the line — `**TOOL_CALL:**`, a blockquote,
@@ -268,15 +278,80 @@ export function formatResult(
   tool: string,
   outcome: { output?: unknown; error?: unknown },
 ): string {
-  const body = outcome.error
-    ? { tool, error: String((outcome.error as Error)?.message ?? outcome.error) }
-    : { tool, output: outcome.output ?? null };
-  let json = JSON.stringify(body);
-  // The AI Mode composer caps input at 8192 characters, and the result shares
-  // that budget with the follow-up instruction. Truncating here keeps a large
-  // file from silently losing its tail inside the page.
-  if (json.length > MAX_RESULT) {
-    json = `${json.slice(0, MAX_RESULT)}… [truncated]`;
+  return formatResults([{ tool, outcome }])[0]!;
+}
+
+/**
+ * Every result in one message, sharing one budget.
+ *
+ * Small results are never trimmed to make room for a large one — the budget is
+ * handed out in equal shares and whatever a result does not use goes back into
+ * the pot, so `{"code":0}` alongside a long file costs the file almost
+ * nothing.
+ *
+ * What gets cut is the middle. The end of a compiler's output is where it says
+ * what went wrong, and head-only truncation reliably threw away the one line
+ * worth reading.
+ */
+export function formatResults(
+  items: { tool: string; outcome: { output?: unknown; error?: unknown } }[],
+  budget = RESULT_BUDGET,
+): string[] {
+  const rendered = items.map(({ tool, outcome }) => {
+    const body = outcome.error
+      ? { tool, error: String((outcome.error as Error)?.message ?? outcome.error) }
+      : { tool, output: prune(outcome.output) ?? null };
+    return JSON.stringify(body);
+  });
+
+  // The budget is what the message may take up, so it has to pay for the
+  // markers and the newlines between them too — nine results overran by
+  // exactly their nine prefixes and eight separators before this was counted.
+  const perItem = RESULT_PREFIX.length + 1;
+  const forJson =
+    budget - rendered.length * perItem - Math.max(0, rendered.length - 1);
+
+  const total = rendered.reduce((a, r) => a + r.length, 0);
+  if (total > forJson) {
+    // Max-min fair shares: hand out the budget smallest-first, and whatever a
+    // result does not need is left for the ones that do. Done in one pass —
+    // an earlier version grew the share iteratively and diverged, handing out
+    // five times the budget on the first case it was given.
+    const bySize = rendered
+      .map((r, i) => i)
+      .sort((a, b) => rendered[a]!.length - rendered[b]!.length);
+    const caps = new Array<number>(rendered.length).fill(0);
+    let left = Math.max(0, forJson);
+    let unset = rendered.length;
+    for (const i of bySize) {
+      const share = Math.floor(left / unset);
+      const take = Math.min(rendered[i]!.length, share);
+      caps[i] = take;
+      left -= take;
+      unset--;
+    }
+    for (let i = 0; i < rendered.length; i++) {
+      if (rendered[i]!.length > caps[i]!) rendered[i] = middleOut(rendered[i]!, caps[i]!);
+    }
   }
-  return `${RESULT_PREFIX} ${json}`;
+
+  return rendered.map((json) => `${RESULT_PREFIX} ${json}`);
+}
+
+/** Keep both ends, drop the middle, and say so where the cut was made. */
+function middleOut(text: string, max: number): string {
+  const note = "… [middle cut] …";
+  if (max <= note.length + 40) return `${text.slice(0, max)}…`;
+  const keep = max - note.length;
+  const head = Math.ceil(keep * 0.6);
+  return text.slice(0, head) + note + text.slice(text.length - (keep - head));
+}
+
+/** Empty strings carry nothing and cost as much as anything else to send. */
+function prune(output: unknown): unknown {
+  if (!output || typeof output !== "object" || Array.isArray(output)) return output;
+  const kept = Object.entries(output as Record<string, unknown>).filter(
+    ([, v]) => v !== "" && v !== undefined,
+  );
+  return Object.fromEntries(kept);
 }

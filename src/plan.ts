@@ -21,7 +21,13 @@ export interface Task {
   note?: string;
 }
 
-const PLAN_LINE = /^\s*(?:[-*]|\d+[.)])\s+(.{3,200})$/gm;
+/**
+ * A list item, with the emphasis a model wraps one in. The leading `**` has to
+ * be allowed for rather than cleaned up afterwards: `**1. Write the file**`
+ * failed to match at all, because the bullet alternative consumed the first
+ * asterisk and then wanted a space where the second one was.
+ */
+const PLAN_LINE = /^\s*(?:\*\*|__)?\s*(?:[-*+]|\d+[.)])\s+(.{3,200})$/gm;
 
 /**
  * Pull a numbered or bulleted list out of the model's reply. A plan arrives as
@@ -59,9 +65,26 @@ export interface StepOutcome {
   explicit: boolean;
 }
 
-const DONE_RE = /\b(DONE|完了)\b/i;
-const SKIP_RE = /\b(SKIP|SKIPPED|不要|スキップ)\b/i;
-const FAIL_RE = /\b(FAILED|BLOCKED|失敗|できません|できなかった)\b/i;
+/**
+ * Verdict words, in both languages.
+ *
+ * The Japanese alternatives used to sit inside the same `\b…\b` as the
+ * English ones, where they could never match: `\b` is a boundary between a
+ * word character and a non-word character, and no CJK character is a word
+ * character, so `\b完了\b` matches only if 完了 is surrounded by ASCII. Every
+ * reply that said 完了しました went unread for as long as that stood, and an
+ * autonomous run in Japanese could only ever end by saying DONE in English.
+ *
+ * The lookarounds are the other half of it: 未完了 and 完了していません both
+ * contain 完了 and mean the opposite of it.
+ */
+const NEGATED = "(?!.{0,4}(?:ませ|しない|できな|していな))";
+const DONE_RE = new RegExp(`\\bDONE\\b|(?<!未)完了${NEGATED}`, "i");
+const SKIP_RE = new RegExp(`\\b(?:SKIP|SKIPPED)\\b|不要${NEGATED}|スキップ${NEGATED}`, "i");
+const FAIL_RE = new RegExp(
+  `\\b(?:FAILED|BLOCKED)\\b|失敗${NEGATED}|できません|できなかった`,
+  "i",
+);
 const ADD_RE = /^\s*(?:NEXT|ADD|追加):\s*(.{3,200})$/gim;
 
 /**
@@ -90,8 +113,7 @@ export interface StepVerdict {
  * DONE was allowed to end them.
  */
 export function saysAllDone(text: string): boolean {
-  const withoutSteps = text.replace(STEP_RE, "");
-  return /\bDONE\b|\b完了\b/i.test(withoutSteps);
+  return DONE_RE.test(text.replace(STEP_RE, ""));
 }
 
 export function readStepVerdicts(text: string): StepVerdict[] {
