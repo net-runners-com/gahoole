@@ -139,7 +139,7 @@ Code as well, so the numbers below come from one task list and one verifier.
 | Claude Code · haiku-4.5 | 3/3 | 3/3 | 3/3 | **9/9** | 19.2s | 28 | $0.38 |
 | Claude Code · sonnet-5 | 3/3 | 3/3 | 3/3 | **9/9** | 16.6s | 21 | $1.53 |
 | Claude Code · opus-5 | 3/3 | 3/3 | 3/3 | **9/9** | 16.8s | 19 | $2.08 |
-| gahoole (ai-mode) | 3/3 | 3/3 | 3/3 | **9/9** | 28.7s | 29 | none |
+| gahoole (ai-mode) | 3/3 | 3/3 | 3/3 | **9/9** | 30.2s | 31 | none |
 
 **All four score 9/9, which means the benchmark no longer separates them.**
 What it still separates is price and patience: haiku reaches the same score for
@@ -154,10 +154,17 @@ involved.
 
 ### Getting there in fewer calls
 
-gahoole opened at 42 model calls and finished at 29, without losing a task.
-Every one of those calls is a query against a rate limit of roughly eighty per
-ten minutes, so this is the number that decides how much work fits in a
-session.
+gahoole opened at 42 model calls and now sits at a median of 31 over seven
+runs, without losing a task. Every one of those calls is a query against a
+rate limit of roughly eighty per ten minutes, so this is the number that
+decides how much work fits in a session.
+
+**Read the per-change column below as a direction, not a measurement.** Each
+of those rows is a single run, and seven runs of the *same* code came in at
+29, 30, 30, 31, 33, 42 and 48 — a spread wider than most of the differences
+being attributed. What holds across every run is where the calls go: the
+reasoning group costs exactly 3 every time and the problem-solving group 7,
+so all of the variance, and all of the room left, is in the autonomous group.
 
 | | change | auto | total |
 |---|---|---|---|
@@ -166,6 +173,13 @@ session.
 | 3 | restore list markers when reading the page | 32 | 42 |
 | 4 | let one turn finish several plan steps | 31 | 41 |
 | 5 | end the run on the goal's own DONE | **19** | **29** |
+
+A later fix belongs in this list even though it was found by a test rather
+than by a stopwatch: the Japanese verdict words could never match, because
+`\b完了\b` needs 完了 to be surrounded by ASCII. On a backend that answers in
+Japanese, a run could only end by saying DONE in English. The four runs since
+came in at 30, 30, 31 and 33, against 29, 42 and 48 before — not faster, but
+no longer wandering.
 
 Two of those made it worse before the last one made it better, and both are
 worth keeping written down.
