@@ -24,9 +24,18 @@ import { launchPersistentContext } from "cloakbrowser";
  * loudly rather than silently.
  */
 
-const PROFILE_DIR = path.resolve(
+const PROFILE_ROOT = path.resolve(
   process.env.GAHOOLE_BROWSER_PROFILE ?? "data/browser-profile",
 );
+
+/**
+ * The rate limit is keyed on the session cookie, not the IP — measured: a
+ * fresh profile answers immediately while the blocked one is still refused.
+ * So the way to keep running is to rotate profiles, not to sit and wait. Each
+ * one is a directory beside the first.
+ */
+const profileFor = (n: number): string =>
+  n === 0 ? PROFILE_ROOT : `${PROFILE_ROOT}-${n}`;
 
 /** What AI Mode shows instead of an answer once the limit is reached. */
 const BLOCKED = /エラーが発生したため|回答が生成されませんでした|error occurred/i;
@@ -59,6 +68,16 @@ const LANDING = "https://www.google.com/search?udm=50&aep=1&source=hp";
  * with "AI Mode returned nothing".
  */
 const URL_MAX = 400;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Set by the CLI so a rotation is visible rather than a silent two-minute gap. */
+let onRateLimit: ((rotation: number, rotating: boolean) => void) | undefined;
+export function onAiModeRateLimit(
+  fn: (rotation: number, rotating: boolean) => void,
+): void {
+  onRateLimit = fn;
+}
 
 export class AiModeRateLimitError extends Error {
   /** Shaped so `classifyFailure` reads it the same way it reads a 429. */
@@ -103,6 +122,15 @@ export class AiModeBackend {
   #page?: any;
   /** Set on a fork: it borrows the parent's browser and must not close it. */
   #borrowed = false;
+  /** Which profile directory is in use; bumped when the limit is hit. */
+  #profile = 0;
+  #rotations = 0;
+  /**
+   * Enough of the conversation to carry across a rotation. A rotated profile
+   * is a new AI Mode thread with no memory of what came before, so without
+   * this the agent resumes mid-task with no idea what the task was.
+   */
+  #history: string[] = [];
   /** Conversation text as of the last answer, for diffing the next one. */
   #seen = "";
   #started = false;
@@ -119,8 +147,8 @@ export class AiModeBackend {
    * lock whose process is gone is stale and safe to clear — which beats
    * greeting the user with "profile is already in use" after a crash.
    */
-  #clearStaleLock(): void {
-    const lock = path.join(PROFILE_DIR, "SingletonLock");
+  #clearStaleLock(dir: string): void {
+    const lock = path.join(dir, "SingletonLock");
     let target: string;
     try {
       target = fs.readlinkSync(lock);
@@ -138,7 +166,7 @@ export class AiModeBackend {
     }
     for (const f of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) {
       try {
-        fs.unlinkSync(path.join(PROFILE_DIR, f));
+        fs.unlinkSync(path.join(dir, f));
       } catch {
         /* already gone */
       }
@@ -165,11 +193,12 @@ export class AiModeBackend {
 
   async #ensure(): Promise<any> {
     if (this.#page) return this.#page;
-    fs.mkdirSync(PROFILE_DIR, { recursive: true });
-    this.#clearStaleLock();
+    const dir = profileFor(this.#profile);
+    fs.mkdirSync(dir, { recursive: true });
+    this.#clearStaleLock(dir);
     const ctx = (await launchPersistentContext({
       headless: !this.opts.headed,
-      userDataDir: PROFILE_DIR,
+      userDataDir: dir,
       viewport: { width: 1280, height: 900 },
     })) as unknown as Ctx & { newPage: () => Promise<any> };
     this.#ctx = ctx;
@@ -283,7 +312,7 @@ export class AiModeBackend {
     await page.waitForTimeout(1500);
   }
 
-  async ask(prompt: string, attachments: string[] = []): Promise<string> {
+  async #askOnce(prompt: string, attachments: string[] = []): Promise<string> {
     const page = await this.#ensure();
 
     // A search URL is not a general input channel: an attachment cannot ride
@@ -370,10 +399,70 @@ export class AiModeBackend {
     return stripChrome(fresh);
   }
 
+  /**
+   * Ask, and keep asking across the rate limit.
+   *
+   * Hitting the limit used to end the run: the handoff saved the conversation
+   * and the user restarted. That is the right behaviour for a person sitting
+   * there, and useless for a hundred-turn run. Since the limit follows the
+   * cookie rather than the address, a rotation to a fresh profile resumes
+   * immediately — measured, while the blocked profile was still refused.
+   *
+   * The new profile is a new AI Mode thread with no memory, so a recap of the
+   * conversation so far is prepended to the retried prompt. Rotations are
+   * bounded; past that it waits, because a limit that survives a fresh cookie
+   * is not one more cookie away from clearing.
+   */
+  async ask(prompt: string, attachments: string[] = []): Promise<string> {
+    const maxRotations = Number(process.env.GAHOOLE_MAX_ROTATIONS ?? 6);
+    const waitMs = Number(process.env.GAHOOLE_RATE_WAIT_MS ?? 120_000);
+
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const answer = await this.#askOnce(
+          attempt === 0 ? prompt : `${this.#recap()}${prompt}`,
+          attachments,
+        );
+        this.#remember(prompt, answer);
+        return answer;
+      } catch (e) {
+        if (!(e instanceof AiModeRateLimitError)) throw e;
+        if (this.#rotations >= maxRotations) throw e;
+
+        this.#rotations++;
+        const rotating = this.#rotations <= maxRotations;
+        onRateLimit?.(this.#rotations, rotating);
+
+        await this.close();
+        this.#profile++;
+        this.#started = false;
+        this.#seen = "";
+
+        // Later rotations wait as well: if several fresh cookies in a row are
+        // refused, the limit is not cookie-shaped and spinning through
+        // profiles only makes more of them.
+        if (this.#rotations > 2) await sleep(waitMs);
+      }
+    }
+  }
+
+  /** The last few exchanges, compact enough to prepend to a prompt. */
+  #recap(): string {
+    if (this.#history.length === 0) return "";
+    return `Context from an interrupted session — continue from here:\n${this.#history.join("\n")}\n\n`;
+  }
+
+  #remember(prompt: string, answer: string): void {
+    const line = `- asked: ${prompt.slice(0, 160)} → ${answer.slice(0, 200)}`;
+    this.#history.push(line);
+    if (this.#history.length > 6) this.#history.shift();
+  }
+
   /** Start a fresh AI Mode thread — used when a gahoole session changes. */
   reset(): void {
     this.#started = false;
     this.#seen = "";
+    this.#history = [];
   }
 
   async close(): Promise<void> {

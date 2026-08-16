@@ -13,6 +13,7 @@ import {
 import { registerFileGuard } from "./hooks/file-guard.js";
 import { approvalMode, registerApproval } from "./hooks/approval.js";
 import { connectMcp } from "./mcp.js";
+import { onAiModeRateLimit } from "./backends/aimode.js";
 import { Spinner } from "./spinner.js";
 import { bindLineOwner } from "./output.js";
 import { extractAttachments } from "./attachments.js";
@@ -44,6 +45,7 @@ const HELP = `
 
   autonomous
     /auto <goal>       plan the work, then carry it out step by step
+                       (up to GAHOOLE_MAX_STEPS turns, default 100)
 
   new session from this one
     /clear             start empty
@@ -237,6 +239,16 @@ async function main(): Promise<void> {
   spinnerRef = spinner;
   bindLineOwner(spinner);
 
+  // A rotation takes seconds and a wait takes minutes; both look like a hang
+  // unless they are announced.
+  onAiModeRateLimit((rotation, rotating) => {
+    spinner.label(
+      rotating
+        ? `rate limited — switching profile (${rotation})`
+        : "rate limited — waiting",
+    );
+  });
+
   lifecycle
     .on("UserPromptSubmit", () => spinner.start("thinking"))
     .on("PreToolUse", (e) => spinner.label(`running ${e.toolName}`))
@@ -320,6 +332,7 @@ async function main(): Promise<void> {
                 break;
               }
               const result = await runAutonomously(arg, {
+                maxSteps: Number(process.env.GAHOOLE_MAX_STEPS ?? 100),
                 run: (p) => session.run(p),
                 onPlan: (tasks) =>
                   console.log(`\n${renderPlan(tasks, !process.env.NO_COLOR)}\n`),

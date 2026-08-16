@@ -27,6 +27,11 @@ import {
 export interface AutoDeps {
   /** One turn. The CLI passes `session.run`, so hooks and handoff apply. */
   run: (prompt: string) => Promise<string>;
+  /**
+   * Turns the run may spend. The default is small because each one is a query
+   * against the rate limit; long runs raise it and rely on the backend
+   * rotating profiles to keep going.
+   */
   maxSteps?: number;
   /** Called whenever the list changes, for the CLI to redraw it. */
   onPlan?: (tasks: Task[]) => void;

@@ -307,7 +307,25 @@ trip counts against the rate limit; and the composer caps input at 8192
 characters, so a large tool result is truncated before it is sent. Set
 `GAHOOLE_TOOLS=0` to turn the protocol off and get plain conversation.
 
-Its rate limit is the reason the handoff machinery exists: HTTP stays 200 and
+### Running past the rate limit
+
+A long run hits the limit — measured at roughly eighty queries per ten
+minutes, and an autonomous task can spend six turns. The limit follows the
+**session cookie, not the address**: a fresh profile answers immediately while
+the blocked one is still refused (measured). So the backend rotates to a new
+profile directory and retries, rather than stopping.
+
+| Rotation | What happens |
+|---|---|
+| 1–2 | new profile, retry at once — seconds |
+| 3–6 | new profile, then wait `GAHOOLE_RATE_WAIT_MS` (default 2 min) |
+| past 6 | give up; a limit surviving six fresh cookies is not cookie-shaped |
+
+A rotated profile is a new AI Mode thread with no memory of the task, so the
+last few exchanges are prepended to the retried prompt. `/auto` runs up to
+`GAHOOLE_MAX_STEPS` turns (default 100).
+
+Its rate limit is also why the handoff machinery exists: HTTP stays 200 and
 the answer is quietly replaced by a short error string, so the backend detects
 it by reading the answer and raises a 429-shaped error that the rest of the
 program already knows how to handle.
