@@ -50,6 +50,22 @@ const profileFor = (n: number): string =>
 const CRASHED =
   /target (?:closed|crashed)|browser has been closed|browser has disconnected|session closed|page closed|protocol error|websocket/i;
 
+/**
+ * The page produced no conversation at all.
+ *
+ * Distinct from a rate limit, which replaces the answer with an error string,
+ * and from a crash, which takes the browser with it. Measured: hammering one
+ * profile with short questions, this happened once in forty queries and the
+ * same profile answered normally straight afterwards — so it is a hiccup, and
+ * a hiccup that ended the session was the whole cost of it.
+ */
+export class EmptyAnswerError extends Error {
+  constructor() {
+    super("AI Mode returned nothing");
+    this.name = "EmptyAnswerError";
+  }
+}
+
 export function looksLikeCrash(e: unknown): boolean {
   const message = e instanceof Error ? e.message : String(e);
   return CRASHED.test(message);
@@ -136,6 +152,12 @@ export function onAiModePartial(fn: ((text: string) => void) | undefined): void 
 let onRelaunch: ((why: string) => void) | undefined;
 export function onAiModeRelaunch(fn: (why: string) => void): void {
   onRelaunch = fn;
+}
+
+/** Set by the CLI so a retried question is visible rather than just slow. */
+let onEmpty: (() => void) | undefined;
+export function onAiModeEmpty(fn: () => void): void {
+  onEmpty = fn;
 }
 
 export class AiModeRateLimitError extends Error {
@@ -473,7 +495,7 @@ export class AiModeBackend {
       : all;
     this.#seen = all;
 
-    if (!fresh) throw new Error("AI Mode returned nothing");
+    if (!fresh) throw new EmptyAnswerError();
     if (BLOCKED.test(fresh)) throw new AiModeRateLimitError();
     return stripChrome(fresh);
   }
@@ -504,12 +526,24 @@ export class AiModeBackend {
           attachments,
         );
         this.#remember(prompt, answer);
+        this.#retriedEmpty = false;
         return answer;
       } catch (e) {
         // A dead browser is not a refused answer. Relaunching costs one query
         // and gets the turn back; without it a crashed renderer ended the
         // session and the conversation went to the handoff for no reason.
         // Once only — a crash that repeats is a crash worth seeing.
+        // An empty page is worth asking again for, once. The retry starts a
+        // fresh navigation rather than continuing the thread, because whatever
+        // state left the container empty is in the page.
+        if (e instanceof EmptyAnswerError && !this.#retriedEmpty) {
+          this.#retriedEmpty = true;
+          onEmpty?.();
+          this.#started = false;
+          this.#seen = "";
+          continue;
+        }
+
         if (looksLikeCrash(e) && !this.#relaunched) {
           this.#relaunched = true;
           onRelaunch?.(e instanceof Error ? e.message : String(e));
@@ -541,6 +575,8 @@ export class AiModeBackend {
 
   /** One relaunch per session; see the catch in `ask`. */
   #relaunched = false;
+  /** One retry per turn for an empty page; reset once a turn succeeds. */
+  #retriedEmpty = false;
 
   /** The last few exchanges, compact enough to prepend to a prompt. */
   #recap(): string {

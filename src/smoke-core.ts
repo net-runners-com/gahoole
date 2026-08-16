@@ -94,6 +94,17 @@ try {
     );
   }
 
+  // An empty page is its own thing: not a refusal, not a dead browser, and
+  // measured at roughly one query in forty when hammering — the same profile
+  // answers normally straight afterwards, so it is worth asking again for.
+  {
+    const { EmptyAnswerError } = await import("./backends/aimode.js");
+    const empty = new EmptyAnswerError();
+    assert.equal(empty.name, "EmptyAnswerError");
+    assert.ok(!looksLikeCrash(empty), "and not treated as a crash");
+    assert.ok(!(empty instanceof AiModeRateLimitError), "nor as a refusal");
+  }
+
   // =========================================================================
   // a turn knows itself, and only inside itself
   // =========================================================================

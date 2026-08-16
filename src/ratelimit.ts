@@ -8,8 +8,11 @@
  * the second and third profiles get the same allowance as the first or a
  * smaller one.
  *
- *   npm run ratelimit              until three profiles are exhausted
- *   npm run ratelimit -- 5 200     five profiles, 200 queries each at most
+ *   npm run ratelimit              three profiles, 200 queries each at most
+ *   npm run ratelimit -- 5 200 1   five profiles, starting at profile 1
+ *
+ * Starting elsewhere than zero matters because profile 0 is the one a running
+ * session holds, and Chromium will not open a profile twice.
  *
  * This deliberately spends the rate limit — that is the measurement. Expect it
  * to take as long as the limit takes to reach, and to leave the profiles it
@@ -39,9 +42,21 @@ const question = (n: number) => `${n} に 1 を足すと？ 数字だけ答え�
 async function main(): Promise<void> {
   const profiles = Number(process.argv[2] ?? 3);
   const perProfile = Number(process.argv[3] ?? 200);
+  const from = Number(process.argv[4] ?? 0);
   const runs: ProfileRun[] = [];
 
-  for (let p = 0; p < profiles; p++) {
+  // Written after every profile rather than at the end. This runs for as long
+  // as the limit takes to reach, several times over, and a measurement that
+  // only exists once it is complete is a measurement you lose to a Ctrl-C.
+  const save = () => {
+    fs.mkdirSync(path.dirname(OUT), { recursive: true });
+    fs.writeFileSync(
+      OUT,
+      `${JSON.stringify({ at: new Date().toISOString(), runs }, null, 2)}\n`,
+    );
+  };
+
+  for (let p = from; p < from + profiles; p++) {
     // A backend of its own per profile, with rotation switched off — rotation
     // is what is being measured, so it must not happen behind the measurement.
     const backend = new AiModeBackend({
@@ -86,6 +101,7 @@ async function main(): Promise<void> {
       note,
     };
     runs.push(run);
+    save();
     process.stdout.write(
       `\r  profile ${p}: \x1b[1m${run.queries}\x1b[0m queries in ${run.seconds}s — ${run.endedBy}` +
         `${note ? ` (${note})` : ""}\n`,
@@ -96,11 +112,7 @@ async function main(): Promise<void> {
     if (ended === "error") break;
   }
 
-  fs.mkdirSync(path.dirname(OUT), { recursive: true });
-  fs.writeFileSync(
-    OUT,
-    `${JSON.stringify({ at: new Date().toISOString(), runs }, null, 2)}\n`,
-  );
+  save();
 
   const limited = runs.filter((r) => r.endedBy === "limit");
   console.log("\n\x1b[1mwhat rotation buys\x1b[0m");

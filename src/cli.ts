@@ -19,6 +19,7 @@ import {
 } from "./hooks/approval.js";
 import { connectMcp } from "./mcp.js";
 import {
+  onAiModeEmpty,
   onAiModePartial,
   onAiModeRateLimit,
   onAiModeRelaunch,
@@ -363,6 +364,10 @@ async function main(): Promise<void> {
   // A crash used to look like a very long wait.
   onAiModeRelaunch((why) => {
     spinner.label(`browser died (${why.slice(0, 40)}) — restarting`);
+  });
+
+  onAiModeEmpty(() => {
+    spinner.label("the page came back empty — asking again");
   });
 
   // The answer as it is written.
