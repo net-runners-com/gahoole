@@ -5,15 +5,22 @@
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Lifecycle } from "./lifecycle.js";
 import { createAgent, createMemory } from "./agent.js";
 import { Session } from "./session.js";
 import { SessionStore } from "./sessions.js";
-import { classifyFailure, HandoffStore, shouldHandoff } from "./handoff.js";
 
-const DIR = path.resolve("data/handoff");
+// Its own directory, so a run cannot read or clobber a real handoff — and so
+// the test does not have to know where the program keeps them.
+const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "gahoole-handoff-"));
+process.env.HANDOFF_DIR = DIR;
+
+// After the environment is set: handoff.ts resolves its directory once, at
+// import, so importing it at the top would pin it to the real one.
+const { classifyFailure, HandoffStore, shouldHandoff } = await import("./handoff.js");
 
 // --- classification ---------------------------------------------------------
 const rl = classifyFailure(

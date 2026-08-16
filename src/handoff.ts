@@ -8,6 +8,7 @@ import {
   ObservationStore,
   parseObservations,
 } from "./observations.js";
+import { inProject } from "./paths.js";
 
 /**
  * Carrying a conversation across a rate limit.
@@ -28,7 +29,9 @@ import {
  * The next session reads whichever of the two exists, newest wins.
  */
 
-const DIR = path.resolve(process.env.HANDOFF_DIR ?? "data/handoff");
+const DIR = process.env.HANDOFF_DIR
+  ? path.resolve(process.env.HANDOFF_DIR)
+  : inProject("handoff");
 
 export type FailureKind = "rate_limit" | "overloaded" | "context" | "other";
 

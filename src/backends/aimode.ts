@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { launchPersistentContext } from "cloakbrowser";
 import { readConversation } from "./extract.js";
+import { inProject } from "../paths.js";
 
 /**
  * Google AI Mode (`udm=50`) as the model backend.
@@ -25,9 +26,9 @@ import { readConversation } from "./extract.js";
  * loudly rather than silently.
  */
 
-const PROFILE_ROOT = path.resolve(
-  process.env.GAHOOLE_BROWSER_PROFILE ?? "data/browser-profile",
-);
+const PROFILE_ROOT = process.env.GAHOOLE_BROWSER_PROFILE
+  ? path.resolve(process.env.GAHOOLE_BROWSER_PROFILE)
+  : inProject("browser-profile");
 
 /**
  * The rate limit is keyed on the session cookie, not the IP — measured: a

@@ -32,7 +32,14 @@ const SECRET = [
 ];
 
 /** Generated trees: writing here is almost always a mistake. */
-const GENERATED = [/^node_modules\//, /^dist\//, /^data\/(?!notes\/)/];
+const GENERATED = [
+  /^node_modules\//,
+  /^dist\//,
+  // gahoole's own directory: the notes are the agent's, the rest is the
+  // program's bookkeeping and not something a tool call should be editing.
+  /^\.gahoole\/(?!notes\/)/,
+  /^data\/(?!notes\/)/,
+];
 
 /**
  * Files whose loss would not be recoverable from the trash, because losing

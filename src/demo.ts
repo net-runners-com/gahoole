@@ -23,9 +23,10 @@ import {
   registerMcpPolicy,
   registerWriteGuard,
 } from "./hooks/logging.js";
+import { inProject } from "./paths.js";
 
 
-const LOG = "data/events.jsonl";
+const LOG = inProject("events.jsonl");
 fs.rmSync(LOG, { force: true });
 
 const lifecycle = new Lifecycle();
@@ -122,7 +123,7 @@ await turn(session, "write a huge note", [
 // ── session 2: fork the thread and keep going ──────────────────────────────
 session = await session.fork();
 await turn(session, "read the note back", [
-  { tool: "read_file", input: { path: "data/notes/demo.md" } },
+  { tool: "read_file", input: { path: ".gahoole/notes/demo.md" } },
 ]);
 
 // ── session 3: clear, then exit ────────────────────────────────────────────

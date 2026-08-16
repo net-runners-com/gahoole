@@ -32,6 +32,7 @@ import { runAutonomously } from "./autonomous.js";
 import { renderPlan } from "./plan.js";
 import { formatSessions, SessionStore } from "./sessions.js";
 import { HandoffStore } from "./handoff.js";
+import { migrate, projectInstructions, settings } from "./paths.js";
 import {
   ObservationStore,
   renderObservations,
@@ -98,7 +99,9 @@ usage
 
 environment
   ANTHROPIC_API_KEY   required
-  GAHOOLE_DB_URL      default file:./data/gahoole.db
+  GAHOOLE_HOME        default ~/.gahoole
+  GAHOOLE_DIR         default ~/.gahoole/projects/<this project>
+  GAHOOLE_DB_URL      default <that directory>/gahoole.db
   GAHOOLE_USER        default local-user
   GAHOOLE_PROFILE     default athena
   MCP_CONFIG          default mcp.json
@@ -126,6 +129,16 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Everything gahoole keeps lives in .gahoole/. A project from before the
+  // rename has it in data/, and a directory full of somebody's sessions is not
+  // something to abandon in place.
+  const moved = migrate();
+  if (moved) console.log(`${DIM}${moved}${RESET}`);
+
+  // Defaults from ~/.gahoole/settings.json, then this project's on top. A flag
+  // beats both, because it was typed just now.
+  const config = settings();
+
   // The prompt profile, not the browser profiles the AI Mode backend rotates
   // through on a rate limit — those are Chromium data directories and are not
   // reachable from here.
@@ -133,6 +146,7 @@ async function main(): Promise<void> {
   const wantProfile =
     (profileIdx === -1 ? undefined : argv[profileIdx + 1]) ??
     process.env.GAHOOLE_PROFILE ??
+    config.profile ??
     DEFAULT_PROFILE;
   const startProfile = findProfile(wantProfile);
   if (!startProfile) {
@@ -252,6 +266,22 @@ async function main(): Promise<void> {
   // A rate limit ended the last session; pick up where it stopped. Resuming an
   // explicit session id means the user chose their own continuation, so the
   // handoff is left on disk for whenever they do start fresh.
+  // GAHOOLE.md, the way Claude Code reads CLAUDE.md: what this project needs
+  // said every time, kept in the repository rather than in a person's memory.
+  // Seeded rather than prepended to each prompt — the tool preamble already
+  // rides on every question and the wording of it is fragile.
+  {
+    const instructions = projectInstructions();
+    if (instructions) {
+      await session.seedContext(
+        `Instructions for this project, from GAHOOLE.md:\n\n${instructions}`,
+      );
+      console.log(
+        `\x1b[2mGAHOOLE.md · ${instructions.split("\n").length} lines of project instructions\x1b[0m`,
+      );
+    }
+  }
+
   // What earlier sessions established, whether or not one of them was cut
   // short. A handoff is the interrupted case; this is the ordinary one.
   {
@@ -290,7 +320,7 @@ async function main(): Promise<void> {
         ? ` retry after ${Math.ceil(f.retryAfterMs / 1000)}s.`
         : "";
       console.error(
-        `\x1b[33m${f.kind} — conversation saved to data/handoff.${wait}\n` +
+        `\x1b[33m${f.kind} — conversation saved to the handoff.${wait}\n` +
           `  restart, or /clear, to continue from it.\x1b[0m`,
       );
     },
@@ -380,7 +410,7 @@ async function main(): Promise<void> {
   // ungated — the opposite of the intent, and silently so. Without a terminal
   // there is nobody to ask, so the answer is no unless the caller said
   // otherwise with --allow or GAHOOLE_APPROVE.
-  const asked: ApprovalMode = approvalMode();
+  const asked: ApprovalMode = approvalMode(config.approve);
   const startMode: ApprovalMode =
     argv.includes("--allow") || argv.includes("-y")
       ? "allow"
@@ -531,7 +561,9 @@ async function main(): Promise<void> {
               const result = await runAutonomously(arg, {
                 // The profile sets the ceiling; the environment still wins,
                 // because someone who set it meant it.
-                maxSteps: Number(process.env.GAHOOLE_MAX_STEPS ?? profile.steps),
+                maxSteps: Number(
+                  process.env.GAHOOLE_MAX_STEPS ?? config.maxSteps ?? profile.steps,
+                ),
                 run: (p) => session.run(p),
                 onPlan: (tasks) =>
                   console.log(`\n${renderPlan(tasks, !process.env.NO_COLOR)}\n`),

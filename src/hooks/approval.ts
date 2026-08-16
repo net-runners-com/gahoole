@@ -18,8 +18,9 @@ export type Ask = (question: string) => Promise<string>;
 
 export type ApprovalMode = "ask" | "allow" | "deny";
 
-export function approvalMode(): ApprovalMode {
-  const v = (process.env.GAHOOLE_APPROVE ?? "ask").toLowerCase();
+/** `configured` comes from settings.json; the environment still wins. */
+export function approvalMode(configured?: string): ApprovalMode {
+  const v = (process.env.GAHOOLE_APPROVE ?? configured ?? "ask").toLowerCase();
   return v === "allow" || v === "deny" ? v : "ask";
 }
 

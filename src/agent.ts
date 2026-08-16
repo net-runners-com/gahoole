@@ -6,11 +6,13 @@ import { LibSQLStore } from "@mastra/libsql";
 import type { Lifecycle } from "./lifecycle.js";
 import { currentTurn } from "./turn-context.js";
 import { tools } from "./tools.js";
+import { inProject } from "./paths.js";
 
 export const MODEL = "anthropic/claude-opus-5";
 
 /** Everything — messages, thread metadata, traces — lands in this one file. */
-export const DB_URL = process.env.GAHOOLE_DB_URL ?? "file:./data/gahoole.db";
+export const DB_URL =
+  process.env.GAHOOLE_DB_URL ?? `file:${inProject("gahoole.db")}`;
 
 export function createMemory(): Memory {
   // libSQL opens the file but will not create its parent directory.

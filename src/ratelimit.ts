@@ -19,8 +19,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { AiModeBackend, AiModeRateLimitError } from "./backends/aimode.js";
+import { inProject } from "./paths.js";
 
-const OUT = path.resolve("data/ratelimit.json");
+const OUT = inProject("ratelimit.json");
 
 interface ProfileRun {
   profile: number;

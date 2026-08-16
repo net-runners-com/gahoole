@@ -234,12 +234,46 @@ with reasoning. One clause fixed it: an empty conversation is never settled.
 
 ## Storage
 
-The browser profile for the `ai-mode` backend lives in `data/browser-profile`;
-deleting it starts over with fresh cookies.
+Everything gahoole keeps lives under the home directory, in the shape Claude
+Code uses — not beside your code.
 
-Messages, thread metadata, traces, and eval scores all live in
-`data/gahoole.db` (libSQL / SQLite-compatible). One file, no server, survives
-restarts. The lifecycle's own audit log is `data/events.jsonl`.
+```
+~/.gahoole/
+  trusted.json                    folders you have said yes to
+  settings.json                   defaults everywhere
+  projects/<slug>/                one directory per project you work in
+    gahoole.db                    messages, threads, traces
+    events.jsonl                  the lifecycle audit log
+    memory/                       what earlier sessions established
+    handoff/                      a conversation cut short, waiting
+    notes/                        the agent's own scratch space
+    trash/                        deleted files, recoverable
+    browser-profile-N/            Chromium user data, one per rotation
+
+<project>/.gahoole/settings.json  settings the repository chose to commit
+<project>/GAHOOLE.md              instructions for this project
+```
+
+A repository is something you clone, share and gitignore; a browser profile
+and a database of your conversations are none of those. Keeping them in the
+working tree means every project you touch grows a directory you then have to
+remember to ignore. The slug is the project's absolute path with its
+separators flattened, so two checkouts of the same repository keep their own
+histories.
+
+What stays in the repository is what belongs to it: `GAHOOLE.md`, read at
+startup the way Claude Code reads `CLAUDE.md`, and any settings someone chose
+to commit. Project settings win over global ones; a flag wins over both.
+
+```json
+{ "profile": "argus", "approve": "allow", "maxSteps": 40 }
+```
+
+`data/` is where all of this used to live. It is moved across on first run,
+whole, and the move is announced rather than done quietly.
+
+Deleting `~/.gahoole/projects/<slug>` starts that project over. Deleting
+`~/.gahoole` starts everything over, including which folders you trust.
 
 This will not work on a serverless host with an ephemeral filesystem. Swapping
 `LibSQLStore` for Turso or Postgres in `src/agent.ts` is the only change needed

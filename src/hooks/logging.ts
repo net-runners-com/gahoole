@@ -3,8 +3,9 @@ import path from "node:path";
 import type { Lifecycle } from "../lifecycle.js";
 import { mcpServerOf } from "../mcp.js";
 import { log, logError } from "../output.js";
+import { inProject } from "../paths.js";
 
-const LOG = path.resolve("data/events.jsonl");
+const LOG = inProject("events.jsonl");
 
 /**
  * Every lifecycle event, one JSON object per line. This is the audit trail —

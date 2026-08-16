@@ -2,6 +2,7 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { projectDir } from "./paths.js";
 
 /**
  * The local file tools.
@@ -131,14 +132,14 @@ export const listFiles = createTool({
 /**
  * Deleting is the one action here with no undo, driven by a model that asked
  * for it in prose. So it does not unlink: it moves the target into
- * `data/trash/<timestamp>/`, keeping the path it came from. The model is told
+ * `.gahoole/trash/<timestamp>/`, keeping the path it came from. The model is told
  * plainly that this is what "delete" means, and the result says where the file
  * went so a person can put it back.
  */
 export const deleteFile = createTool({
   id: "delete_file",
   description:
-    "Delete a file by moving it to data/trash, from where it can be restored. Use when asked to remove a file.",
+    "Delete a file by moving it to .gahoole/trash, from where it can be restored. Use when asked to remove a file.",
   inputSchema: z.object({
     path: z.string().describe("Path relative to the project root"),
   }),
@@ -154,7 +155,7 @@ export const deleteFile = createTool({
     }
 
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const dest = path.join(ROOT, "data", "trash", stamp, rel(target));
+    const dest = path.join(projectDir(), "trash", stamp, rel(target));
     await fs.mkdir(path.dirname(dest), { recursive: true });
     await fs.rename(target, dest);
     return { path: rel(target), trashed: rel(dest) };
@@ -301,7 +302,7 @@ export const runCommand = createTool({
 export const writeNote = createTool({
   id: "write_note",
   description:
-    "Save a note to data/notes/<name>.md. Use when asked to remember or write something down for later.",
+    "Save a note to .gahoole/notes/<name>.md. Use when asked to remember or write something down for later.",
   inputSchema: z.object({
     name: z.string().describe("File name without extension"),
     body: z.string().describe("Markdown body of the note"),
@@ -312,7 +313,7 @@ export const writeNote = createTool({
     if (!safe || safe === "." || safe === "..") {
       throw new Error(`invalid note name: ${name}`);
     }
-    const dir = path.join(ROOT, "data", "notes");
+    const dir = path.join(projectDir(), "notes");
     await fs.mkdir(dir, { recursive: true });
     const target = path.join(dir, `${safe}.md`);
     await fs.writeFile(target, body, "utf8");
@@ -321,7 +322,14 @@ export const writeNote = createTool({
 });
 
 /** Directories that are never worth walking and never worth reading. */
-const SKIP = new Set([".git", "node_modules", "dist", "data", ".cloakbrowser"]);
+const SKIP = new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  "data",
+  ".gahoole",
+  ".cloakbrowser",
+]);
 
 /**
  * Secrets that are not dotfiles, and so survive the walk's dot filter. Kept

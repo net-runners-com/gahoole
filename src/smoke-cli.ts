@@ -26,6 +26,19 @@ interface Run {
   code: number;
 }
 
+/**
+ * The one directory under this run's home that holds its state. Found rather
+ * than computed: the slug comes from the *resolved* working directory, and on
+ * macOS a temporary directory is a symlink, so building the name here would
+ * disagree with the program about where it put things.
+ */
+function storeFor(home: string): string {
+  const projects = path.join(home, ".gahoole", "projects");
+  const [only] = fs.existsSync(projects) ? fs.readdirSync(projects) : [];
+  assert.ok(only, `one project directory under ${projects}`);
+  return path.join(projects, only!);
+}
+
 /** One CLI process: `input` is typed at the prompt, one line per element. */
 function run(
   input: string[],
@@ -58,6 +71,7 @@ function run(
           GAHOOLE_BACKEND: "stub",
           GAHOOLE_STUB: JSON.stringify(opts.replies ?? ["ok."]),
           GAHOOLE_USER: "smoke",
+          GAHOOLE_HOME: path.join(home, ".gahoole"),
           MCP_CONFIG: path.join(home, "no-such-mcp.json"),
           ...opts.env,
         },
@@ -248,7 +262,7 @@ function run(
     });
     assert.match(hit.stderr + hit.stdout, /rate.?limit/i, `the limit is reported:\n${hit.stderr}`);
 
-    const saved = path.join(home, "project", "data", "handoff", "smoke.json");
+    const saved = path.join(storeFor(home), "handoff", "smoke.json");
     assert.ok(fs.existsSync(saved), "the conversation is written to disk");
     const carried = fs.readFileSync(saved, "utf8");
     assert.match(carried, /越谷市/, "including what was being talked about");
@@ -266,6 +280,84 @@ function run(
         !fs.readFileSync(saved, "utf8").includes("越谷市"),
       "and takes it, so it is not carried twice",
     );
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+// --- the state lives under the home directory, not beside the code ---------
+{
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "gahoole-cli-"));
+  const work = path.join(home, "project");
+  fs.mkdirSync(path.join(work, "data", "notes"), { recursive: true });
+  fs.writeFileSync(path.join(work, "data", "notes", "old.md"), "from before");
+
+  try {
+    const r = await run(["こんにちは", "/exit"], { home, keep: true });
+    assert.match(r.stdout, /moved data\/ into/, `it says what it moved:\n${r.stdout}`);
+    const store = storeFor(home);
+    assert.ok(!fs.existsSync(path.join(work, "data")), "the old directory is gone");
+    assert.equal(
+      fs.readFileSync(path.join(store, "notes", "old.md"), "utf8"),
+      "from before",
+      "with everything that was in it",
+    );
+    for (const expected of ["gahoole.db", "events.jsonl"]) {
+      assert.ok(fs.existsSync(path.join(store, expected)), `${expected} is written there`);
+    }
+    // And the working tree is left alone.
+    assert.ok(
+      !fs.existsSync(path.join(work, ".gahoole")),
+      "nothing is created in the project",
+    );
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+// --- settings.json sets the defaults, and a flag still beats it ------------
+{
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "gahoole-cli-"));
+  const work = path.join(home, "project");
+  fs.mkdirSync(path.join(work, ".gahoole"), { recursive: true });
+  fs.writeFileSync(
+    path.join(work, ".gahoole", "settings.json"),
+    JSON.stringify({ profile: "argus" }),
+  );
+  try {
+    const fromFile = await run(["/profile", "/exit"], { home, keep: true });
+    assert.match(
+      fromFile.stdout.slice(fromFile.stdout.indexOf("athena")),
+      /›\s*argus/,
+      "the project's settings choose the profile",
+    );
+    const fromFlag = await run(["/profile", "/exit"], {
+      home,
+      keep: true,
+      args: ["--profile", "pythia"],
+    });
+    assert.match(
+      fromFlag.stdout.slice(fromFlag.stdout.indexOf("athena")),
+      /›\s*pythia/,
+      "and a flag typed just now beats it",
+    );
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+// --- GAHOOLE.md is read the way CLAUDE.md is -------------------------------
+{
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "gahoole-cli-"));
+  const work = path.join(home, "project");
+  fs.mkdirSync(work, { recursive: true });
+  fs.writeFileSync(
+    path.join(work, "GAHOOLE.md"),
+    "# このプロジェクトについて\n\n出力は必ず日本語で。",
+  );
+  try {
+    const r = await run(["/exit"], { home, keep: true });
+    assert.match(r.stdout, /GAHOOLE\.md · 3 lines/, `it is read and counted:\n${r.stdout}`);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

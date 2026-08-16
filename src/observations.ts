@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { inProject } from "./paths.js";
 
 /**
  * What a session leaves behind.
@@ -43,7 +44,9 @@ export interface Observation {
   detail?: string;
 }
 
-const DIR = path.resolve(process.env.GAHOOLE_MEMORY_DIR ?? "data/memory");
+const DIR = process.env.GAHOOLE_MEMORY_DIR
+  ? path.resolve(process.env.GAHOOLE_MEMORY_DIR)
+  : inProject("memory");
 const FILE = (resourceId: string): string =>
   path.join(DIR, `${resourceId.replace(/[^a-zA-Z0-9._-]/g, "_")}.jsonl`);
 

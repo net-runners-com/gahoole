@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { stdin, stdout } from "node:process";
 import { wrap } from "./tui.js";
+import { inHome } from "./paths.js";
 
 /**
  * The folder check that runs before anything else.
@@ -31,7 +32,7 @@ const BOLD = "\x1b[1m";
 const AMBER = "\x1b[38;5;179m";
 const CYAN = "\x1b[38;5;110m";
 
-const STORE = path.join(os.homedir(), ".gahoole", "trusted.json");
+const STORE = inHome("trusted.json");
 
 interface Record_ {
   trustedAt: string;
