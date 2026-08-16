@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "fs": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    "hello": {
+      "command": "node",
+      "args": ["examples/mcp-hello/server.js"]
     }
   }
 }

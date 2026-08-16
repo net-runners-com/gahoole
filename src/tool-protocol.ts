@@ -95,6 +95,24 @@ export function buildPreamble(tools: ToolSpec[]): string {
   ].join("\n");
 }
 
+/**
+ * A one-line reminder prepended to every question.
+ *
+ * The preamble alone is not enough on AI Mode: it is a search product, and a
+ * question that looks like a topic gets answered from the web several turns
+ * after the rules were explained. Restating the rule in the same message as
+ * the question is what actually holds.
+ */
+export function buildReminder(tools: ToolSpec[]): string {
+  if (tools.length === 0) return "";
+  const names = tools.map((t) => `${t.name}(${t.params.join(",")})`).join(", ");
+  return [
+    `[Tools you can run here: ${names}.`,
+    `If one of them answers this, reply with a single ${CALL_PREFIX} line and nothing else — do not search the web and do not guess the output.`,
+    "Otherwise answer normally.]",
+  ].join(" ");
+}
+
 export function parseCalls(text: string): ParsedCall[] {
   const calls: ParsedCall[] = [];
   for (const m of text.matchAll(CALL_RE)) {

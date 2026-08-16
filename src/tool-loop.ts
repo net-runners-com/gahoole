@@ -3,6 +3,7 @@ import type { Lifecycle } from "./lifecycle.js";
 import { createToolHooks } from "./agent.js";
 import {
   buildPreamble,
+  buildReminder,
   describeTool,
   formatResult,
   parseCalls,
@@ -59,17 +60,18 @@ export class ToolLoop implements Backend {
   async ask(prompt: string): Promise<string> {
     if (Object.keys(this.tools).length === 0) return this.inner.ask(prompt);
 
+    const specs = Object.entries(this.tools).map(([n, t]) => describeTool(n, t));
+
     if (!this.#primed) {
       // The preamble is its own turn: a model that receives instructions and a
       // question together tends to answer the question and forget the rules.
-      const specs = Object.entries(this.tools).map(([n, t]) =>
-        describeTool(n, t),
-      );
       await this.inner.ask(buildPreamble(specs));
       this.#primed = true;
     }
 
-    let answer = await this.inner.ask(prompt);
+    // ...and the rule is restated with the question, because several turns
+    // later the preamble no longer competes with the model's own instincts.
+    let answer = await this.inner.ask(`${buildReminder(specs)}\n\n${prompt}`);
 
     for (let i = 0; i < this.maxIterations; i++) {
       const calls = parseCalls(answer);

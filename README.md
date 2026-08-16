@@ -84,8 +84,12 @@ environment, so the file can be committed while tokens stay in `.env`.
 }
 ```
 
-`mcp.json` is gitignored; `mcp.json.example` is the committed template. With no
-`mcp.json` the agent runs with local tools only.
+`mcp.json` is gitignored; `mcp.json.example` is the committed template, which
+points at `examples/mcp-hello` — a minimal stdio server whose one tool spawns a
+command and returns its output (with no arguments, it prints `hello`). It
+exists so the whole path can be checked end to end: connect, namespace, gate,
+and drive from the model. With no `mcp.json` the agent runs with local tools
+only.
 
 **MCP tools take the same hook path as local ones.** They arrive namespaced
 `<server>_<tool>` and pass through `PreToolUse`/`PostToolUse` unchanged — which

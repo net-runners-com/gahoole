@@ -115,7 +115,13 @@ const tools = {
   assert.equal(executed, 1);
   assert.deepEqual(seen, ["pre:read_file", "post:read_file"]);
   assert.ok(stub.prompts[0]?.includes("TOOL_CALL:"), "preamble sent first");
-  assert.equal(stub.prompts[1], "what is in a.txt?");
+  // The question carries the rule restated, because the preamble alone does
+  // not survive several turns on a search-shaped model.
+  assert.ok(stub.prompts[1]?.endsWith("what is in a.txt?"));
+  assert.ok(
+    stub.prompts[1]?.includes("Tools you can run here: read_file(path)"),
+    "the rule is restated with the question",
+  );
   assert.ok(
     stub.prompts[2]?.includes("TOOL_RESULT:") &&
       stub.prompts[2].includes("contents of a.txt"),
