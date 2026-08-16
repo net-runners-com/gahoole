@@ -186,6 +186,11 @@ try {
     });
 
   assert.match((await check("read_file", { path: "../secrets" }))?.deny ?? "", /outside/);
+  // The project root is a normal thing to list or search, and not a thing to
+  // write to or delete.
+  assert.equal(await check("list_files", { dir: "." }), undefined);
+  assert.equal(await check("search_files", { dir: "." }), undefined);
+  assert.match((await check("delete_file", { path: "." }))?.deny ?? "", /project root/);
   assert.match((await check("read_file", { path: ".env" }))?.deny ?? "", /credentials/);
   assert.match((await check("read_file", { path: ".git/config" }))?.deny ?? "", /credentials/);
   assert.match((await check("write_file", { path: "node_modules/x.js", content: "" }))?.deny ?? "", /generated/);

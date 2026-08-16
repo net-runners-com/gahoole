@@ -64,8 +64,14 @@ export function registerFileGuard(lifecycle: Lifecycle): void {
     const target = relativize(input.path ?? input.dir);
 
     if (target !== undefined) {
-      if (target === "" || target.startsWith("..")) {
+      if (target.startsWith("..")) {
         return { deny: `${input.path ?? input.dir} is outside the project` };
+      }
+      // An empty relative path is the project root. Reading it is the most
+      // ordinary thing there is — `list_files({dir:"."})` is how a session
+      // starts — so only the tools that change things are stopped here.
+      if (target === "" && MUTATING.has(e.toolName)) {
+        return { deny: `${input.path ?? input.dir} is the project root, not a file` };
       }
       if (SECRET.some((re) => re.test(target))) {
         return { deny: `${target} holds credentials or repository internals` };

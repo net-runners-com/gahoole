@@ -120,6 +120,12 @@ export function buildPreamble(tools: ToolSpec[]): string {
   return [
     "You are running inside a program that can execute tools for you.",
     "",
+    // Without this the model spends a turn finding out where it is — the first
+    // observed session ran `pwd`, was refused, and fell back to python. Paths
+    // are relative to this directory, so it is worth one line to say so.
+    `The working directory is ${process.cwd()}. Every path you give a tool is`,
+    "relative to it, and nothing outside it can be read or written.",
+    "",
     "Available tools:",
     list,
     "",
