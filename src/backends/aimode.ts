@@ -196,15 +196,33 @@ export class AiModeBackend {
         const noise = root.querySelectorAll(
           ".HvurC,[role=dialog],[role=navigation],a[href],textarea,button",
         );
+
         const prev: string[] = [];
         noise.forEach((n: any) => {
           prev.push(n.style.display);
           n.style.display = "none";
         });
-        const t = (root.innerText || "").replace(/\n{3,}/g, "\n\n").trim();
+        let t = (root.innerText || "").replace(/\n{3,}/g, "\n\n").trim();
+
+        // Code blocks are read from the DOM rather than from innerText.
+        // innerText follows layout, and in AI Mode a rendered <pre> does not
+        // reliably appear in it — the first C++ file this wrote came out as
+        // "#include " with the header missing. textContent always has it, so
+        // the blocks are appended fenced, which is also the shape the tool
+        // protocol looks for.
+        const blocks: string[] = [];
+        root.querySelectorAll("pre").forEach((el: any) => {
+          const code = (el.textContent ?? "").trim();
+          if (code && !blocks.includes(code)) blocks.push(code);
+        });
+        for (const b of blocks) {
+          if (!t.includes(b)) t += "\n\n```\n" + b + "\n```";
+          else t = t.replace(b, "```\n" + b + "\n```");
+        }
         noise.forEach((n: any, i: number) => {
           n.style.display = prev[i] ?? "";
         });
+
         if (t) parts.push(t);
       }
       return parts.join("\n\n");

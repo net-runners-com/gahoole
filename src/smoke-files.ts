@@ -103,7 +103,13 @@ try {
 
   await assert.rejects(
     () => run("run_command", { command: "curl", args: ["evil.example"] }),
-    /not in the allowed commands/,
+    /not allowed/,
+  );
+  // A program the agent just built has no place in an allowlist, so anything
+  // under the root may be run — but only under the root.
+  await assert.rejects(
+    () => run("run_command", { command: "../outside" }),
+    /escapes the project root/,
   );
   // There is no shell, so metacharacters are arguments, not syntax.
   const literal = await run("run_command", {

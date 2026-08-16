@@ -17,6 +17,8 @@ import { Spinner } from "./spinner.js";
 import { bindLineOwner } from "./output.js";
 import { extractAttachments } from "./attachments.js";
 import { createSpawnTool, SPAWN_TOOL } from "./subagent.js";
+import { runAutonomously } from "./autonomous.js";
+import { renderPlan } from "./plan.js";
 import { formatSessions, SessionStore } from "./sessions.js";
 import { HandoffStore } from "./handoff.js";
 import { banner, readVersion, statusLine, type BannerInfo } from "./banner.js";
@@ -39,6 +41,9 @@ const HELP = `
     /delete <prefix>   delete a session and its messages
     /id                print the current session id
     /handoff           show the carry-over waiting for the next session
+
+  autonomous
+    /auto <goal>       plan the work, then carry it out step by step
 
   new session from this one
     /clear             start empty
@@ -305,6 +310,23 @@ async function main(): Promise<void> {
                 `  from ${h.sessionId.slice(0, 8)} · ${h.reason} · ${h.turns} turns · ` +
                   `${h.pending ? "transcript only" : "summarized"}\n` +
                   `  ${(h.summary ?? h.digest).slice(0, 400)}`,
+              );
+              break;
+            }
+
+            case "auto": {
+              if (!arg) {
+                console.log("usage: /auto <goal>");
+                break;
+              }
+              const result = await runAutonomously(arg, {
+                run: (p) => session.run(p),
+                onPlan: (tasks) =>
+                  console.log(`\n${renderPlan(tasks, !process.env.NO_COLOR)}\n`),
+              });
+              const done = result.tasks.filter((t) => t.status === "done").length;
+              console.log(
+                `\x1b[2m  ${result.stopped} · ${done}/${result.tasks.length} done · ${result.steps} steps\x1b[0m\n`,
               );
               break;
             }

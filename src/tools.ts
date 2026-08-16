@@ -195,14 +195,17 @@ export const runCommand = createTool({
   }),
   execute: async ({ command, args }) => {
     const argv = args ?? [];
-    const base = path.basename(command);
-    if (!ALLOWED.has(command) && !ALLOWED.has(base)) {
+    // A program the agent just built is not something an allowlist can name
+    // in advance, so anything under the project root may be run — the path is
+    // still resolved through resolveInRoot, so it cannot point outside. The
+    // allowlist governs what may be reached on the wider system.
+    const local = command.startsWith("./") || command.startsWith("../");
+    const exe = local ? resolveInRoot(command) : command;
+    if (!local && !ALLOWED.has(command) && !ALLOWED.has(path.basename(command))) {
       throw new Error(
-        `${command} is not in the allowed commands (${[...ALLOWED].slice(0, 8).join(", ")}…)`,
+        `${command} is not allowed. Run programs inside the project as ./name; the allowed system commands are ${[...ALLOWED].slice(0, 8).join(", ")}…`,
       );
     }
-    // Relative executables such as ./a.out must stay inside the project.
-    const exe = command.includes("/") ? resolveInRoot(command) : command;
 
     const { execFile } = await import("node:child_process");
     return await new Promise((resolve, reject) => {
