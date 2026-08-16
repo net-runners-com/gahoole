@@ -34,6 +34,17 @@ const SECRET = [
 /** Generated trees: writing here is almost always a mistake. */
 const GENERATED = [/^node_modules\//, /^dist\//, /^data\/(?!notes\/)/];
 
+/**
+ * Files whose loss would not be recoverable from the trash, because losing
+ * them is how you lose everything else too.
+ */
+const UNDELETABLE = [
+  /^package(-lock)?\.json$/,
+  /^tsconfig\.json$/,
+  /^src\/tools\.ts$/,
+  /^src\/hooks\/file-guard\.ts$/,
+];
+
 const MAX_WRITE = 500_000;
 
 function relativize(p: unknown): string | undefined {
@@ -61,6 +72,9 @@ export function registerFileGuard(lifecycle: Lifecycle): void {
       }
       if (MUTATING.has(e.toolName) && GENERATED.some((re) => re.test(target))) {
         return { deny: `${target} is generated — edit the source instead` };
+      }
+      if (e.toolName === "delete_file" && UNDELETABLE.some((re) => re.test(target))) {
+        return { deny: `${target} is not something to delete` };
       }
     }
 

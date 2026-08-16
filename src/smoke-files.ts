@@ -16,6 +16,7 @@ const SCRATCH = path.join(ROOT, "tmp-smoke-files");
 fs.rmSync(SCRATCH, { recursive: true, force: true });
 fs.mkdirSync(SCRATCH, { recursive: true });
 const at = (p: string) => path.join("tmp-smoke-files", p);
+const trash: string[] = [];
 
 const run = (name: keyof typeof tools, input: unknown) =>
   (tools[name] as { execute: (i: unknown, c?: unknown) => Promise<any> }).execute(
@@ -69,6 +70,24 @@ try {
   });
   assert.deepEqual(shallow.files.sort(), [at("a.txt"), at("dup.txt")].sort());
 
+  // --- delete moves to the trash rather than unlinking ------------------------
+  await run("write_file", { path: at("gone.txt"), content: "bye" });
+  const del = await run("delete_file", { path: at("gone.txt") });
+  assert.ok(!fs.existsSync(path.join(SCRATCH, "gone.txt")), "gone from where it was");
+  assert.ok(
+    fs.existsSync(path.join(ROOT, del.trashed)),
+    `and recoverable at ${del.trashed}`,
+  );
+  assert.equal(fs.readFileSync(path.join(ROOT, del.trashed), "utf8"), "bye");
+  trash.push(path.join(ROOT, del.trashed));
+
+  await assert.rejects(() => run("delete_file", { path: at("nope.txt") }), /no such file/);
+  await assert.rejects(
+    () => run("delete_file", { path: "tmp-smoke-files" }),
+    /is a directory/,
+  );
+  await assert.rejects(() => run("delete_file", { path: "." }), /project root/);
+
   // --- the tools refuse to leave the root -----------------------------------
   await assert.rejects(
     () => run("read_file", { path: "../../etc/passwd" }),
@@ -96,6 +115,10 @@ try {
   assert.match((await check("read_file", { path: ".git/config" }))?.deny ?? "", /credentials/);
   assert.match((await check("write_file", { path: "node_modules/x.js", content: "" }))?.deny ?? "", /generated/);
   assert.match((await check("write_file", { path: "src/x.ts", content: "x".repeat(600_000) }))?.deny ?? "", /too much/);
+  // Some files are not worth trashing even recoverably.
+  assert.match((await check("delete_file", { path: "package.json" }))?.deny ?? "", /not something to delete/);
+  assert.match((await check("delete_file", { path: "src/tools.ts" }))?.deny ?? "", /not something to delete/);
+  assert.equal(await check("delete_file", { path: "src/other.ts" }), undefined);
   // Reading .env is refused too — a model that reads it can repeat it.
   assert.ok(await check("read_file", { path: ".env" }), "reads are guarded as well");
   // Ordinary source is untouched.
@@ -121,6 +144,7 @@ try {
     });
 
   assert.equal(await askFor("read_file"), undefined, "reads are never asked about");
+  assert.ok(MUTATING.has("delete_file"), "deleting is gated by approval");
   assert.equal(answers.length, 0);
 
   assert.match((await askFor("write_file"))?.deny ?? "", /declined/);
@@ -152,5 +176,6 @@ try {
   );
 } finally {
   fs.rmSync(SCRATCH, { recursive: true, force: true });
+  for (const t of trash) fs.rmSync(path.dirname(path.dirname(t)), { recursive: true, force: true });
 }
 process.exit(0);

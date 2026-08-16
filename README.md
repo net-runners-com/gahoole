@@ -163,6 +163,7 @@ lifecycle, hooks, session management and handoff are identical either way.
 | `read_file(path, offset, limit)` | Read a file, optionally a range of lines |
 | `write_file(path, content)` | Create or replace a file |
 | `edit_file(path, old, new)` | Replace an exact string that appears once |
+| `delete_file(path)` | Move a file to `data/trash/<timestamp>/`, recoverable |
 | `list_files(dir, pattern, depth)` | Find what exists before reading it |
 | `write_note(name, body)` | The agent's own scratch space under `data/notes` |
 
@@ -176,7 +177,16 @@ not the same check written three times:
    root, `.env` and `.git` and key files (on read as well as write, since a
    model that can read a secret can repeat it), writes into generated trees,
    and absurd payloads.
-3. **Approval** asks a human before anything is written. `GAHOOLE_APPROVE=ask`
+**Deleting does not unlink.** It is the one action with no undo, asked for in
+prose by a model, so `delete_file` moves the target into
+`data/trash/<timestamp>/` keeping its original path, and the result says where
+it went. The tool description tells the model that is what delete means, so it
+does not promise the user more than happened. Directories are refused —
+files go one at a time — and a short list of files (`package.json`,
+`tsconfig.json`, the tools and the guard itself) is refused outright, because
+losing those is how you lose the ability to get anything else back.
+
+3. **Approval** asks a human before anything is written or deleted. `GAHOOLE_APPROVE=ask`
    is the default; `allow` skips it, `deny` refuses outright. Reads are never
    asked about — approving each one teaches the habit of saying yes, which is
    the failure this exists to prevent. Answering `a` allows that tool for the

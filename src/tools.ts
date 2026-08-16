@@ -128,6 +128,39 @@ export const listFiles = createTool({
   },
 });
 
+/**
+ * Deleting is the one action here with no undo, driven by a model that asked
+ * for it in prose. So it does not unlink: it moves the target into
+ * `data/trash/<timestamp>/`, keeping the path it came from. The model is told
+ * plainly that this is what "delete" means, and the result says where the file
+ * went so a person can put it back.
+ */
+export const deleteFile = createTool({
+  id: "delete_file",
+  description:
+    "Delete a file by moving it to data/trash, from where it can be restored. Use when asked to remove a file.",
+  inputSchema: z.object({
+    path: z.string().describe("Path relative to the project root"),
+  }),
+  outputSchema: z.object({ path: z.string(), trashed: z.string() }),
+  execute: async ({ path: p }) => {
+    const target = resolveInRoot(p);
+    if (target === ROOT) throw new Error("refusing to delete the project root");
+
+    const stat = await fs.stat(target).catch(() => undefined);
+    if (!stat) throw new Error(`no such file: ${rel(target)}`);
+    if (stat.isDirectory()) {
+      throw new Error(`${rel(target)} is a directory — delete files individually`);
+    }
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const dest = path.join(ROOT, "data", "trash", stamp, rel(target));
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.rename(target, dest);
+    return { path: rel(target), trashed: rel(dest) };
+  },
+});
+
 /** Kept separate from write_file: notes are the agent's own scratch space. */
 export const writeNote = createTool({
   id: "write_note",
@@ -194,9 +227,15 @@ export const tools = {
   read_file: readFile,
   write_file: writeFile,
   edit_file: editFile,
+  delete_file: deleteFile,
   list_files: listFiles,
   write_note: writeNote,
 };
 
 /** Tools that change the filesystem — the set approval and guards care about. */
-export const MUTATING = new Set(["write_file", "edit_file", "write_note"]);
+export const MUTATING = new Set([
+  "write_file",
+  "edit_file",
+  "delete_file",
+  "write_note",
+]);
