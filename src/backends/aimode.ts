@@ -89,6 +89,27 @@ const URL_MAX = 400;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Where a turn's seconds go, when asked.
+ *
+ * `GAHOOLE_TIMING=1` prints a line per phase to stderr. A turn here is a
+ * browser doing several things in sequence and the total says nothing about
+ * which of them was slow — the answer to "why did that take thirteen seconds"
+ * is a different fix depending on whether it was the launch, the typing, or
+ * the model still writing.
+ */
+const timing = (): boolean => process.env.GAHOOLE_TIMING === "1";
+
+async function phase<T>(name: string, fn: () => Promise<T>): Promise<T> {
+  if (!timing()) return fn();
+  const at = Date.now();
+  try {
+    return await fn();
+  } finally {
+    process.stderr.write(`  [timing] ${name.padEnd(18)} ${Date.now() - at}ms\n`);
+  }
+}
+
 /** Set by the CLI so a rotation is visible rather than a silent two-minute gap. */
 let onRateLimit: ((rotation: number, rotating: boolean) => void) | undefined;
 export function onAiModeRateLimit(
@@ -248,6 +269,10 @@ export class AiModeBackend {
 
   async #ensure(): Promise<any> {
     if (this.#page) return this.#page;
+    return phase("launch browser", () => this.#launch());
+  }
+
+  async #launch(): Promise<any> {
     const dir = profileFor(this.#profile);
     fs.mkdirSync(dir, { recursive: true });
     this.#clearStaleLock(dir);
@@ -349,11 +374,23 @@ export class AiModeBackend {
     // with roughly a thousand characters. Both cases start from the empty AI
     // Mode composer instead, which costs the same single query.
     if (!this.#started && (attachments.length > 0 || prompt.length > URL_MAX)) {
-      await page.goto(`${LANDING}&hl=${this.opts.hl ?? "ja"}`, {
-        waitUntil: "domcontentloaded",
-        timeout: this.opts.timeoutMs ?? 90_000,
+      await phase("open composer", async () => {
+        await page.goto(`${LANDING}&hl=${this.opts.hl ?? "ja"}`, {
+          waitUntil: "domcontentloaded",
+          timeout: this.opts.timeoutMs ?? 90_000,
+        });
+        // Wait for the composer, not for a number. This was a flat 2500ms
+        // sleep, and it is on the path every session takes once tools are
+        // attached — the preamble is longer than a URL can carry, so every
+        // first question goes through here. Measured at 3260ms for the
+        // navigation and the sleep together; the composer is usually there
+        // well before the sleep ended.
+        await page
+          .locator(COMPOSER)
+          .last()
+          .waitFor({ state: "visible", timeout: 8000 })
+          .catch(() => {});
       });
-      await page.waitForTimeout(2500);
       this.#started = true;
       await this.#attach(attachments);
       return this.#send(prompt);
@@ -362,15 +399,17 @@ export class AiModeBackend {
     if (attachments.length > 0) await this.#attach(attachments);
 
     if (!this.#started) {
-      await page.goto(
-        "https://www.google.com/search?q=" +
-          encodeURIComponent(prompt) +
-          `&udm=50&aep=1&source=hp&hl=${this.opts.hl ?? "ja"}`,
-        { waitUntil: "domcontentloaded", timeout: this.opts.timeoutMs ?? 90_000 },
+      await phase("navigate", () =>
+        page.goto(
+          "https://www.google.com/search?q=" +
+            encodeURIComponent(prompt) +
+            `&udm=50&aep=1&source=hp&hl=${this.opts.hl ?? "ja"}`,
+          { waitUntil: "domcontentloaded", timeout: this.opts.timeoutMs ?? 90_000 },
+        ),
       );
       this.#started = true;
-      await this.#settle();
-      return this.#read();
+      await phase("settle", () => this.#settle());
+      return phase("read", () => this.#read());
     }
 
     return this.#send(prompt);
@@ -381,13 +420,18 @@ export class AiModeBackend {
     const page = await this.#ensure();
     const text = prompt.slice(0, COMPOSER_MAX);
     const box = page.locator(COMPOSER).last();
+    if (timing()) {
+      process.stderr.write(`  [timing] prompt ${text.length} chars\n`);
+    }
 
     // fill() sets the value without the input event Google's send handler
     // listens for, and type() sends one keystroke at a time — which times out
     // on anything longer than a sentence. insertText fires a single real
     // input event with the whole string.
-    await box.click();
-    await page.keyboard.insertText(text);
+    await phase("type", async () => {
+      await box.click();
+      await page.keyboard.insertText(text);
+    });
 
     // The click does not always land the focus, and text inserted into
     // nothing leaves the send button disabled — which then times out looking
@@ -399,16 +443,23 @@ export class AiModeBackend {
     }
 
     const before = this.#seen.length;
-    const send = page.locator(SEND).first();
-    try {
-      await send.click({ timeout: 5000 });
-    } catch {
-      // Enter submits too, and works even when the button is mid-transition.
-      await box.press("Enter");
-    }
-    await this.#waitForGrowth(before);
-    await this.#settle();
-    return this.#read();
+    await phase("send", async () => {
+      const send = page.locator(SEND).first();
+      try {
+        // A button that is going to be clickable is clickable quickly. This
+        // waited five seconds before giving up, and measured turns spent all
+        // five of them: the click failed, Enter worked, and the turn had paid
+        // 5.1s for the attempt. Enter is not the fallback because it is worse,
+        // it is the fallback because the button is the more specific target.
+        await send.click({ timeout: 1200 });
+      } catch {
+        // Enter submits too, and works even when the button is mid-transition.
+        await box.press("Enter");
+      }
+    });
+    await phase("first token", () => this.#waitForGrowth(before));
+    await phase("settle", () => this.#settle());
+    return phase("read", () => this.#read());
   }
 
   /** The part of the conversation that was not there before this turn. */
