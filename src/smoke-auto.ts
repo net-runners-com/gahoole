@@ -207,5 +207,28 @@ const script = (replies: string[]) => {
 
 assert.ok(renderPlan([{ id: 1, title: "x", status: "done" }], false).includes("✓ 1. x"));
 
+// The run's last word has to be worth reading. Asking for "STEP <n> DONE"
+// markers got replies that were nothing but markers — one measured run ended
+// with "STEP 2 DONE STEP 3 DONE DONE" and told the person who asked nothing
+// at all about what had been built.
+{
+  const asked: string[] = [];
+  const r = await runAutonomously("build it", {
+    run: async (p) => {
+      asked.push(p);
+      return "1. write it\n2. run it";
+    },
+    maxSteps: 1,
+  });
+  void r;
+  const step = asked[1] ?? asked[0]!;
+  assert.match(step, /STEP <number> DONE/, "the markers are still asked for");
+  assert.match(
+    step.replace(/\s+/g, " "),
+    /sentence saying what the result actually was/,
+    "and so is a sentence a person can read",
+  );
+}
+
 console.log("ok — autonomous: plan, step, discover, budget, stuck, no-plan");
 process.exit(0);

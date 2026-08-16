@@ -87,11 +87,15 @@ one reply — put every tool call that does not need to wait for another's outpu
 in the same reply, rather than stopping after each one.
 
 Use the tools to actually do it; do not describe what you would do. After each
-step you finish, write a line "STEP <number> DONE". When the whole goal is met
-write DONE on its own line. If a step turns out to be unnecessary write
-"STEP <number> SKIP", and if you cannot do one write "STEP <number> FAILED" and
-why. If the work revealed a step the plan is missing, add a line starting NEXT:
-describing it.`;
+step you finish, write a line "STEP <number> DONE". If a step turns out to be
+unnecessary write "STEP <number> SKIP", and if you cannot do one write
+"STEP <number> FAILED" and why. If the work revealed a step the plan is
+missing, add a line starting NEXT: describing it.
+
+When the whole goal is met, write DONE on its own line and then a sentence
+saying what the result actually was — the program's output, the file's
+contents, whatever was asked for. The markers are for me; the sentence is for
+the person who asked, and a reply that is only markers tells them nothing.`;
 
 const CONTINUE_PROMPT = (goal: string) => `Goal: ${goal}
 
