@@ -314,9 +314,26 @@ export class AiModeBackend {
    * feedback chrome. Read from the live DOM because `innerText` needs layout —
    * the noise is hidden and restored rather than cloned away.
    */
+  /**
+   * Read the conversation, tolerating the page moving underneath the read.
+   *
+   * `page.evaluate` throws "Execution context was destroyed" when a navigation
+   * lands mid-call. Measured: hammering one profile, that happened at exactly
+   * query 40 on two separate runs — a long AI Mode thread gets rebuilt, and a
+   * read that raced it died with it. Re-reading once after the navigation has
+   * landed is the whole fix; it costs no query, because nothing was asked.
+   */
   async #conversation(): Promise<string> {
     const page = await this.#ensure();
-    return (await page.evaluate(readConversation, CONVERSATION)) as string;
+    try {
+      return (await page.evaluate(readConversation, CONVERSATION)) as string;
+    } catch (e) {
+      if (!/execution context was destroyed|context was destroyed/i.test(String(e))) {
+        throw e;
+      }
+      await sleep(600);
+      return (await page.evaluate(readConversation, CONVERSATION)) as string;
+    }
   }
 
   /**

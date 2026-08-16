@@ -301,7 +301,31 @@ The model is pluggable, and the two options are not equivalent.
 | Key | none | `ANTHROPIC_API_KEY` |
 | Cost | none | per token |
 | Tool calling | **no** | yes |
-| Rate limit | ~77–100 queries per 10–13 min, *silent* | 429 with `retry-after` |
+| Rate limit | ~98 queries per profile, *silent* | 429 with `retry-after` |
+
+### What the rate limit actually is
+
+Measured with `npm run ratelimit`, which spends the limit on purpose:
+
+| profile | queries | seconds | ended by |
+|---|---|---|---|
+| 1 (already part-spent) | 17 | 47 | limit |
+| 2 (fresh) | **98** | 288 | limit |
+| 3 (fresh) | **99** | 364 | limit |
+
+**A fresh profile is worth about 98 queries, and rotation buys a full
+allowance each time** — 99 on the third profile, not a smaller one. That is
+what makes long runs possible at all, and it had only ever been assumed.
+
+It is a count, not a rate. The earlier estimate of "77–100 queries per 10–13
+minutes" had the count right and the window wrong: at three seconds a query
+the same 98 are gone in under five minutes. So waiting does not help and
+rotating does, which is what the backend already did — now for a measured
+reason rather than a guessed one.
+
+The limit is silent. HTTP stays 200 and the answer is replaced by a short
+error string, which is why `BLOCKED` in `aimode.ts` reads the answer rather
+than the status.
 
 Select with `GAHOOLE_BACKEND=api`. Both plug into `Session.run()`, so the
 lifecycle, hooks, session management and handoff are identical either way.
