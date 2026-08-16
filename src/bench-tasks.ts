@@ -79,7 +79,8 @@ export const TASKS: BenchTask[] = [
     setup: (dir) => write(dir, "add.js", "function add(a, b) { return a - b; }\nconsole.log(add(2, 3));\n"),
     prompt:
       "bench-tmp/add.js にバグがあります。add(2,3) が 5 を出力するように直して、node で実行して確認して。",
-    check: (_a, read) => /return a \+ b/.test(read("add.js")),
+    // Spacing is the author's business, not the task's.
+    check: (_a, read) => /return\s+a\s*\+\s*b/.test(read("add.js")),
   },
 
   // --- autonomy: dependent steps, no one stepping in -----------------------
@@ -97,8 +98,11 @@ export const TASKS: BenchTask[] = [
     steps: 3,
     prompt:
       "bench-tmp/nums.txt に 1行1つで 5,3,9,1 と書いて、node でそれを読んで昇順に並べ替えて bench-tmp/sorted.txt に書き、結果を確認する",
-    check: (_a, read) =>
-      read("sorted.txt").replace(/\s+/g, ",").replace(/^,|,$/g, "") === "1,3,5,9",
+    // Any separator. The prompt says one number per line for the *input* and
+    // says nothing about the output, so "1, 3, 5, 9" is a fair reading of it —
+    // and a check that only accepted newlines failed a run that had done the
+    // task correctly. What is being tested is the sorting, not the punctuation.
+    check: (_a, read) => (read("sorted.txt").match(/\d+/g) ?? []).join(",") === "1,3,5,9",
   },
   {
     id: "auto/inspect",
