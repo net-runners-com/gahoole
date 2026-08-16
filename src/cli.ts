@@ -186,7 +186,9 @@ async function main(): Promise<void> {
     });
   }
   const loop =
-    kind === "ai-mode" && process.env.GAHOOLE_TOOLS !== "0"
+    // The api backend calls tools natively; everything else gets the text
+    // protocol, the stub included — that is the point of the stub.
+    kind !== "api" && process.env.GAHOOLE_TOOLS !== "0"
       ? new ToolLoop(raw, allTools, lifecycle)
       : undefined;
   loop?.use(profile, toolsFor(profile, allTools));
@@ -271,7 +273,7 @@ async function main(): Promise<void> {
 
   const info = (): BannerInfo => ({
     version: readVersion(),
-    model: kind === "ai-mode" ? backend.name : MODEL,
+    model: kind === "api" ? MODEL : backend.name,
     cwd: process.cwd(),
     sessionId: session.id,
     origin: startId ? "resumed" : carriedOver ? "carried over" : undefined,
@@ -314,7 +316,7 @@ async function main(): Promise<void> {
   // always the one the next question will go to.
   const showStatus = () => {
     if (!stdin.isTTY) return;
-    const mode = approval?.mode ?? startMode;
+    const mode = approval.mode;
     const suffix = mode === "ask" ? "" : ` · approval: ${mode}`;
     console.log(statusLine(info(), !process.env.NO_COLOR) + suffix);
   };
@@ -326,21 +328,30 @@ async function main(): Promise<void> {
   const batchInput = interactive ? "" : readFileSync(0, "utf8");
 
   // Approval runs mid-turn, so the spinner has to get out of the way for the
-  // question and come back after. Without a terminal there is no one to ask,
-  // and the hook declines rather than guessing.
-  // --allow / -y starts in allow mode; without a terminal there is nobody to
-  // ask, so the hook declines rather than guessing.
+  // question and come back after.
+  //
+  // It is registered whether or not there is a terminal. It used to be
+  // registered only when there was one, which meant piping input into gahoole
+  // registered no approval hook at all and every write, delete and command ran
+  // ungated — the opposite of the intent, and silently so. Without a terminal
+  // there is nobody to ask, so the answer is no unless the caller said
+  // otherwise with --allow or GAHOOLE_APPROVE.
+  const asked: ApprovalMode = approvalMode();
   const startMode: ApprovalMode =
-    argv.includes("--allow") || argv.includes("-y") ? "allow" : approvalMode();
-  let approval: ApprovalControl | undefined;
-  if (rl) {
-    const ask = rl.question.bind(rl);
-    approval = registerApproval(lifecycle, ask, {
+    argv.includes("--allow") || argv.includes("-y")
+      ? "allow"
+      : interactive || asked !== "ask"
+        ? asked
+        : "deny";
+  const approval: ApprovalControl = registerApproval(
+    lifecycle,
+    rl ? rl.question.bind(rl) : async () => "n",
+    {
       mode: startMode,
       pause: () => spinner.stop(),
       resume: () => spinner.start("thinking"),
-    });
-  }
+    },
+  );
   if (interactive) {
     console.log(`\n${DIM}/help for commands, /exit to leave${RESET}\n`);
   }
@@ -372,10 +383,6 @@ async function main(): Promise<void> {
               break;
 
             case "approve": {
-              if (!approval) {
-                console.log("approval is only available in a terminal");
-                break;
-              }
               const next = arg.toLowerCase();
               if (!next) {
                 console.log(

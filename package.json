@@ -26,7 +26,9 @@
     "bench": "tsx src/bench.ts",
     "duel": "tsx src/duel.ts",
     "smoke:ratelimit": "tsx src/smoke-ratelimit.ts",
-    "smoke:all": "npm run smoke && npm run smoke:protocol && npm run smoke:tools && npm run smoke:files && npm run smoke:trust && npm run smoke:profile && npm run smoke:auto && npm run smoke:handoff && npm run smoke:spinner && npm run smoke:ratelimit && npm run smoke:dom"
+    "smoke:all": "npm run smoke:offline && npm run smoke:dom",
+    "smoke:offline": "npm run smoke && npm run smoke:protocol && npm run smoke:tools && npm run smoke:files && npm run smoke:trust && npm run smoke:profile && npm run smoke:auto && npm run smoke:handoff && npm run smoke:spinner && npm run smoke:ratelimit && npm run smoke:cli",
+    "smoke:cli": "tsx src/smoke-cli.ts"
   },
   "dependencies": {
     "@mastra/core": "^1.59.0",

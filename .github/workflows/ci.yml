@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Everything that needs neither a browser, a key, nor a network. This is the
+  # gate: three bugs shipped in one afternoon that these suites catch.
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run smoke:offline
+
+  # The page reader, against a fixture in real Chromium. Separate because it
+  # downloads a browser, and slow enough that it should not hold up the rest.
+  dom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cloakbrowser
+          key: cloakbrowser-${{ runner.os }}
+      - run: npm ci
+      - run: npm run smoke:dom

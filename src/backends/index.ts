@@ -24,10 +24,51 @@ export interface Backend {
   close?(): Promise<void>;
 }
 
-export type BackendKind = "ai-mode" | "api";
+export type BackendKind = "ai-mode" | "api" | "stub";
 
 export function backendKind(): BackendKind {
-  return process.env.GAHOOLE_BACKEND === "api" ? "api" : "ai-mode";
+  const want = process.env.GAHOOLE_BACKEND;
+  return want === "api" || want === "stub" ? want : "ai-mode";
+}
+
+/**
+ * A backend that answers from a script.
+ *
+ * `GAHOOLE_BACKEND=stub GAHOOLE_STUB='["first","second"]'` — replies come out
+ * in order and the last one repeats. It exists so the CLI can be driven end to
+ * end without a browser, a key or a network: the largest file in the project
+ * is `cli.ts`, and until this it could only be tested by using it.
+ *
+ * The replies may carry TOOL_CALL lines like any other, so the tool loop, the
+ * hooks and the approval prompt are all exercised for real.
+ */
+function createStub(): Backend {
+  let replies: string[] = [];
+  try {
+    const raw = process.env.GAHOOLE_STUB ?? "[]";
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) replies = parsed.map(String);
+  } catch {
+    replies = [process.env.GAHOOLE_STUB ?? ""];
+  }
+  let i = 0;
+  const stub: Backend = {
+    name: "stub",
+    fork: async () => stub,
+    reset: () => {
+      i = 0;
+    },
+    async ask(prompt: string) {
+      // Echoed back so a test can assert on what the model was actually sent.
+      if (process.env.GAHOOLE_STUB_ECHO === "1") {
+        process.stderr.write(`[stub<] ${prompt.replace(/\n/g, "\\n")}\n`);
+      }
+      const reply = replies[Math.min(i, replies.length - 1)] ?? "";
+      i++;
+      return reply;
+    },
+  };
+  return stub;
 }
 
 export function createBackend(
@@ -36,6 +77,7 @@ export function createBackend(
   resourceId: string,
   sessionIdOf: () => string,
 ): Backend {
+  if (kind === "stub") return createStub();
   if (kind === "ai-mode") {
     return new AiModeBackend({
       headed: process.env.GAHOOLE_HEADED === "1",

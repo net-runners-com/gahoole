@@ -1,0 +1,229 @@
+/**
+ * The CLI, driven end to end.
+ *
+ * `cli.ts` is the largest file in the project and had no test at all, because
+ * testing it meant a browser, a key and a person at a keyboard. It needs none
+ * of those now: `GAHOOLE_BACKEND=stub` answers from a script, so a run is a
+ * subprocess with lines on its stdin and text on its stdout.
+ *
+ * Each case runs in its own directory with its own home, so nothing here can
+ * see the developer's sessions, trust record or database.
+ */
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const CLI = path.join(HERE, "cli.ts");
+const TSX = path.join(HERE, "..", "node_modules", ".bin", "tsx");
+
+interface Run {
+  stdout: string;
+  stderr: string;
+  code: number;
+}
+
+/** One CLI process: `input` is typed at the prompt, one line per element. */
+function run(
+  input: string[],
+  opts: { args?: string[]; replies?: string[]; env?: Record<string, string> } = {},
+): Promise<Run> {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "gahoole-cli-"));
+  const work = path.join(home, "project");
+  fs.mkdirSync(work, { recursive: true });
+
+  return new Promise((resolve) => {
+    const child = execFile(
+      TSX,
+      [CLI, "--no-banner", "--trust", ...(opts.args ?? [])],
+      {
+        cwd: work,
+        timeout: 90_000,
+        maxBuffer: 1 << 24,
+        env: {
+          ...process.env,
+          HOME: home,
+          USERPROFILE: home,
+          NO_COLOR: "1",
+          GAHOOLE_BACKEND: "stub",
+          GAHOOLE_STUB: JSON.stringify(opts.replies ?? ["ok."]),
+          GAHOOLE_USER: "smoke",
+          MCP_CONFIG: path.join(home, "no-such-mcp.json"),
+          ...opts.env,
+        },
+      },
+      (err, stdout, stderr) => {
+        fs.rmSync(home, { recursive: true, force: true });
+        resolve({
+          stdout,
+          stderr,
+          code: (err as { code?: number } | null)?.code ?? 0,
+        });
+      },
+    );
+    child.stdin?.end(`${input.join("\n")}\n`);
+  });
+}
+
+// --- it answers a question and leaves ---------------------------------------
+{
+  const r = await run(["こんにちは", "/exit"], { replies: ["はい、聞こえています。"] });
+  assert.match(r.stdout, /聞こえています/, `the answer is printed:\n${r.stdout}`);
+  assert.equal(r.code, 0);
+}
+
+// --- /help and the commands it advertises actually exist --------------------
+{
+  const r = await run(["/help", "/exit"]);
+  const advertised = [...r.stdout.matchAll(/^\s*(\/[a-z]+)/gm)].map((m) => m[1]!);
+  assert.ok(advertised.length >= 10, `help lists the commands: ${advertised.join(" ")}`);
+
+  // Every one of them runs without crashing the process. A command that only
+  // exists in the help text is worse than one that is not documented.
+  const r2 = await run([...new Set(advertised.filter((c) => c !== "/exit"))], {});
+  assert.equal(r2.code, 0, `no command kills the process:\n${r2.stdout}\n${r2.stderr}`);
+  assert.ok(
+    !/unknown command/i.test(r2.stdout),
+    `and none is unknown:\n${r2.stdout}`,
+  );
+}
+
+// --- /profile switches, and says what it switched to ------------------------
+{
+  const r = await run(["/profile", "/profile argus", "/profile", "/exit"]);
+  assert.match(r.stdout, /athena/, "the list names every profile");
+  assert.match(r.stdout, /pythia/);
+  assert.match(r.stdout, /daedalus/);
+  assert.match(r.stdout, /argus/);
+  assert.match(r.stdout, /a hundred eyes/, "switching reports what it switched to");
+  // The marker moves with it.
+  const last = r.stdout.slice(r.stdout.lastIndexOf("athena"));
+  assert.match(last, /›\s*argus/, `the current profile is marked:\n${last}`);
+}
+
+{
+  const r = await run(["/profile nonesuch", "/exit"]);
+  assert.match(r.stdout, /unknown profile/);
+  assert.equal(r.code, 0, "an unknown profile is not fatal");
+}
+
+// --- --profile picks one at startup, and a bad one refuses to start ---------
+{
+  const r = await run(["/profile", "/exit"], { args: ["--profile", "pythia"] });
+  assert.match(r.stdout.slice(r.stdout.indexOf("athena")), /›\s*pythia/);
+}
+{
+  const r = await run(["/exit"], { args: ["--profile", "nonesuch"] });
+  assert.notEqual(r.code, 0, "an unknown profile at startup is fatal");
+  assert.match(r.stderr, /unknown profile/);
+}
+
+// --- the tool loop runs a real tool from a scripted reply -------------------
+{
+  const r = await run(["ファイルを作って", "/exit"], {
+    args: ["--allow"],
+    replies: [
+      ['TOOL_CALL: {"tool":"write_file","input":{"path":"made.txt"}}', "```", "hello", "```"].join(
+        "\n",
+      ),
+      "書き込みました。",
+    ],
+  });
+  assert.match(r.stdout, /write_file/, `the call is shown:\n${r.stdout}`);
+  assert.match(r.stdout, /書き込みました/, "and the answer after it");
+}
+
+// --- approval: piped input is refused, --allow is not -----------------------
+//
+// There is nobody at a pipe to ask, so the answer is no. This used to register
+// no approval hook at all when there was no terminal, which meant piping input
+// into gahoole ran every write, delete and command ungated — the opposite of
+// the intent, and silently so.
+{
+  const call = 'TOOL_CALL: {"tool":"write_file","input":{"path":"a.txt","content":"x"}}';
+  const refused = await run(["やって", "/exit"], { replies: [call, "やめました。"] });
+  assert.ok(
+    !/write_file ok/.test(refused.stdout),
+    `nothing is written without someone to ask:\n${refused.stdout}`,
+  );
+
+  const allowed = await run(["やって", "/exit"], {
+    args: ["--allow"],
+    replies: [call, "やりました。"],
+  });
+  assert.match(allowed.stdout, /write_file ok/, `--allow runs it:\n${allowed.stdout}`);
+
+  // And an explicit environment setting is honoured too, since someone who
+  // set it meant it.
+  const viaEnv = await run(["やって", "/exit"], {
+    replies: [call, "やりました。"],
+    env: { GAHOOLE_APPROVE: "allow" },
+  });
+  assert.match(viaEnv.stdout, /write_file ok/);
+}
+
+// --- /approve changes it mid-session ----------------------------------------
+{
+  const r = await run(["/approve", "/approve allow", "/approve", "/exit"]);
+  assert.match(r.stdout, /ask/);
+  assert.match(r.stdout, /writes, deletes and commands run without asking/);
+}
+
+// --- sessions: /clear starts a new one, /id names it ------------------------
+{
+  const r = await run(["/id", "/clear", "/id", "/exit"]);
+  const ids = [...r.stdout.matchAll(/^[0-9a-f-]{36}$/gm)].map((m) => m[0]);
+  assert.equal(ids.length, 2, `two ids printed:\n${r.stdout}`);
+  assert.notEqual(ids[0], ids[1], "/clear opens a different session");
+}
+
+// --- trust: an untrusted folder with no terminal refuses to run -------------
+//
+// The refusal is the whole point — there is nobody to ask, and assuming yes
+// would mean acting on a folder nobody vouched for.
+{
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "gahoole-cli-"));
+  const work = path.join(home, "project");
+  fs.mkdirSync(work, { recursive: true });
+  const r = await new Promise<Run>((resolve) => {
+    const child = execFile(
+      TSX,
+      [CLI, "--no-banner"],
+      {
+        cwd: work,
+        timeout: 60_000,
+        env: {
+          ...process.env,
+          HOME: home,
+          USERPROFILE: home,
+          NO_COLOR: "1",
+          GAHOOLE_BACKEND: "stub",
+          MCP_CONFIG: path.join(home, "none.json"),
+        },
+      },
+      (err, stdout, stderr) =>
+        resolve({ stdout, stderr, code: (err as { code?: number } | null)?.code ?? 0 }),
+    );
+    child.stdin?.end("/exit\n");
+  });
+  fs.rmSync(home, { recursive: true, force: true });
+  assert.match(r.stdout, /no terminal to ask/);
+  assert.notEqual(r.code, 0, "and it does not run anyway");
+}
+
+// --- --help and --version answer without starting anything ------------------
+{
+  const r = await run([], { args: ["--help"] });
+  assert.match(r.stdout, /usage/);
+  assert.match(r.stdout, /--profile/);
+  assert.equal(r.code, 0);
+
+  const v = await run([], { args: ["--version"] });
+  assert.match(v.stdout.trim(), /^\d+\.\d+\.\d+$/, `a version number: ${v.stdout}`);
+}
+
+console.log("ok — cli: answers, commands, profiles, approval, sessions, trust");
+process.exit(0);
