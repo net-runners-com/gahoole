@@ -475,19 +475,30 @@ assert.equal(parsePlan(Array.from({ length: 40 }, (_, i) => `${i}. step number $
     "./observations.js"
   );
 
-  // A message of results has to fit the composer with room for the sentence
-  // that follows it. The composer silently drops the rest, and what is at the
-  // end is the instruction — so this is the invariant that keeps the model
-  // from being handed output with nothing asked of it.
-  const worst = formatResults(
-    Array.from({ length: 6 }, () => ({
-      tool: "read_file",
-      outcome: { output: { content: "x".repeat(50_000) } },
-    })),
-  ).join("\n");
+  // A message of results has to fit the composer along with everything else
+  // in it: the reminder that rides on every question, the instruction that
+  // follows the results, and the recap a rotation prepends. The composer
+  // silently drops the rest — measured, a skill run went past it and the page
+  // failed to generate at all, returning its own failure text as the answer.
+  const six = Array.from({ length: 6 }, () => ({
+    tool: "read_file",
+    outcome: { output: { content: "x".repeat(50_000) } },
+  }));
   assert.ok(
-    worst.length + 200 < COMPOSER_MAX,
-    `results leave room for the instruction (${worst.length} of ${COMPOSER_MAX})`,
+    formatResults(six).join("\n").length + 200 < COMPOSER_MAX,
+    "the default budget leaves room for the instruction",
+  );
+
+  // And with the rest of the message accounted for, which is what the tool
+  // loop actually passes.
+  const reminder = buildReminder([
+    { name: "read_file", description: "Read a file.", params: ["path"] },
+  ]);
+  const budget = COMPOSER_MAX - reminder.length - 60 - 1400;
+  const sized = formatResults(six, budget).join("\n");
+  assert.ok(
+    sized.length + reminder.length + 60 + 1400 <= COMPOSER_MAX,
+    `everything in the message fits together (${sized.length} + ${reminder.length})`,
   );
 
   // Every type the model is offered is a type the parser accepts, and every

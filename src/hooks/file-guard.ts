@@ -60,6 +60,14 @@ function relativize(p: unknown): string | undefined {
   return path.relative(ROOT, abs).split(path.sep).join("/");
 }
 
+/** Set by the CLI once plugins are loaded; see the note in tools.ts. */
+const readable: string[] = [];
+
+export function allowReadOutsideRoot(dir: string): void {
+  const abs = path.resolve(dir);
+  if (!readable.includes(abs)) readable.push(abs);
+}
+
 export function registerFileGuard(lifecycle: Lifecycle): void {
   lifecycle.on("PreToolUse", (e) => {
     const input = (e.input ?? {}) as {
@@ -72,6 +80,14 @@ export function registerFileGuard(lifecycle: Lifecycle): void {
 
     if (target !== undefined) {
       if (target.startsWith("..")) {
+        // A plugin's own directory is readable, because a skill that ships a
+        // reference document has to be able to read it. Writing there is
+        // still refused: installing a plugin is not agreeing to have it
+        // rewritten.
+        const abs = path.resolve(ROOT, (input.path ?? input.dir)!);
+        if (!MUTATING.has(e.toolName) && readable.some((r) => abs.startsWith(r + path.sep))) {
+          return undefined;
+        }
         return { deny: `${input.path ?? input.dir} is outside the project` };
       }
       // An empty relative path is the project root. Reading it is the most

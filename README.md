@@ -126,6 +126,38 @@ process down. Connections close on `ProcessExit`.
 **A filesystem MCP server pointed at `.` gives the model read and write access to
 the whole project.** Scope it to a subdirectory, or use `MCP_DENY`.
 
+## Plugins
+
+Claude Code's layout, read as it is:
+
+```
+<plugin>/.claude-plugin/plugin.json   name, description
+<plugin>/skills/<name>/SKILL.md       frontmatter, then the instructions
+```
+
+Put one in `~/.gahoole/plugins/`, or name it in `settings.json`:
+
+```json
+{ "plugins": ["~/work/doc-skill"] }
+```
+
+`/plugins` lists what is installed and how to call it; each skill becomes a
+command. Reading someone else's format rather than inventing one is the whole
+point — a directory that works in Claude Code works here untouched.
+
+A skill is instructions, not code. Invoking one sends its body as the
+question, with `$ARGUMENTS` filled in and `${CLAUDE_PLUGIN_ROOT}` pointing at
+the plugin, so a skill that says "run `${CLAUDE_PLUGIN_ROOT}/engine/x.py`"
+resolves to a path the tools can reach. `allowed-tools` names Claude Code's
+tools, which are not this program's, so they are mapped: `Bash` becomes
+`run_command`, `Grep` becomes `search_files`, and anything with no equivalent
+is dropped rather than guessed at. Honouring the intent of a narrower tool set
+matters more than honouring the spelling.
+
+A plugin's own directory is **readable** — a skill that ships a reference
+document has to be able to read it — and not writable. Installing a plugin is
+not agreeing to have it rewritten.
+
 ## Session commands
 
 | Command | Effect |

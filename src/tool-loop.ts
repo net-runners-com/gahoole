@@ -3,6 +3,7 @@ import type { Lifecycle } from "./lifecycle.js";
 import { createToolHooks } from "./agent.js";
 import { log } from "./output.js";
 import type { Profile } from "./profiles.js";
+import { COMPOSER_MAX } from "./backends/aimode.js";
 import {
   buildPreamble,
   buildReminder,
@@ -55,6 +56,18 @@ function claimsWork(answer: string): boolean {
 }
 
 /** Does the request need something done, rather than answered? */
+const CONTINUE = "Continue. Answer the original question using these results.";
+
+/**
+ * Room left for the recap a rotation prepends.
+ *
+ * A rotated profile is a new conversation with no memory of the last one, so
+ * the backend prepends what was said. That arrives after this message has
+ * been built, which is why the space for it has to be left rather than
+ * measured.
+ */
+const RECAP_ALLOWANCE = 1400;
+
 export function needsAction(prompt: string): boolean {
   return /(作って|作成|書いて|書き込|保存|実行して|コンパイル|直して|修正|削除|並べ替え|数えて|確認して|write|create|save|run |compile|fix |delete|append|read the file)/i.test(
     prompt,
@@ -276,9 +289,20 @@ export class ToolLoop implements Backend {
           outcome: await this.#run(call.tool, call.input),
         });
       }
-      // One budget for the message, not one per result: they travel together
-      // now, and the composer drops whatever does not fit.
-      const results = formatResults(outcomes);
+      // One budget for the message, and the message is not only the results.
+      //
+      // The reminder rides on every question, the instruction follows the
+      // results, and on a rotation a recap of the conversation is prepended to
+      // all of it. A fixed results budget ignored every one of those: measured
+      // running a plugin skill, two large reads plus the reminder plus a recap
+      // went past what the composer accepts, the page failed to generate at
+      // all, and the failure text came back as if it were the answer.
+      const follow = `\n\n${CONTINUE}`;
+      const budget = Math.max(
+        1000,
+        COMPOSER_MAX - head.length - follow.length - RECAP_ALLOWANCE,
+      );
+      const results = formatResults(outcomes, budget);
 
       this.#queries++;
       answer = await this.inner.ask(
@@ -288,7 +312,7 @@ export class ToolLoop implements Backend {
               "Repeating it will not change anything. Either move on to the next " +
               "step, or say what is blocking you and stop.\n\n"
             : "") +
-          "Continue. Answer the original question using these results.",
+          CONTINUE,
       );
     }
 

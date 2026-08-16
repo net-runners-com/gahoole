@@ -72,7 +72,8 @@ export function looksLikeCrash(e: unknown): boolean {
 }
 
 /** What AI Mode shows instead of an answer once the limit is reached. */
-const BLOCKED = /エラーが発生したため|回答が生成されませんでした|error occurred/i;
+const BLOCKED =
+  /エラーが発生したため|回答が生成されませんでした|コンテンツを生成できません|error occurred|something went wrong and the content wasn't generated/i;
 
 /** The composer is one of two textareas; the other is a 0×0 feedback field. */
 const COMPOSER = "textarea:visible";

@@ -17,12 +17,34 @@ import { projectDir } from "./paths.js";
 
 const ROOT = process.cwd();
 
-function resolveInRoot(rel: string): string {
+/**
+ * Directories outside the project that may be *read*.
+ *
+ * A plugin's skills refer to files inside the plugin — a reference document,
+ * an example spec, the engine they drive. The first thing the doc-skill
+ * plugin does is read its own reference.md, and confining reads to the project
+ * root refused it, which makes plugins that ship anything more than prose
+ * unusable.
+ *
+ * Read only, and registered by the program rather than reachable from a
+ * prompt: the model cannot widen this, it can only use what the person who
+ * installed a plugin already put on their disk.
+ */
+const READABLE: string[] = [];
+
+export function allowReadRoot(dir: string): void {
+  const abs = path.resolve(dir);
+  if (!READABLE.includes(abs)) READABLE.push(abs);
+}
+
+const within = (target: string, root: string): boolean =>
+  target === root || target.startsWith(root + path.sep);
+
+function resolveInRoot(rel: string, mode: "read" | "write" = "write"): string {
   const target = path.resolve(ROOT, rel);
-  if (target !== ROOT && !target.startsWith(ROOT + path.sep)) {
-    throw new Error(`path escapes the project root: ${rel}`);
-  }
-  return target;
+  if (within(target, ROOT)) return target;
+  if (mode === "read" && READABLE.some((r) => within(target, r))) return target;
+  throw new Error(`path escapes the project root: ${rel}`);
 }
 
 const rel = (abs: string) => path.relative(ROOT, abs) || ".";
@@ -42,7 +64,7 @@ export const readFile = createTool({
     truncated: z.boolean(),
   }),
   execute: async ({ path: p, offset, limit }) => {
-    const text = await fs.readFile(resolveInRoot(p), "utf8");
+    const text = await fs.readFile(resolveInRoot(p, "read"), "utf8");
     const all = text.split("\n");
     if (offset === undefined && limit === undefined) {
       // A whole file still has to fit the model's next message.
@@ -121,7 +143,7 @@ export const listFiles = createTool({
   }),
   outputSchema: z.object({ files: z.array(z.string()), truncated: z.boolean() }),
   execute: async ({ dir, pattern, depth }) => {
-    const start = resolveInRoot(dir ?? ".");
+    const start = resolveInRoot(dir ?? ".", "read");
     const re = pattern ? globToRegExp(pattern) : undefined;
     const found: string[] = [];
     await walk(start, depth ?? 3, re, found);
@@ -193,7 +215,7 @@ export const searchFiles = createTool({
     const re = regex
       ? new RegExp(pattern, "i")
       : new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-    const start = resolveInRoot(dir ?? ".");
+    const start = resolveInRoot(dir ?? ".", "read");
     const candidates: string[] = [];
     await walk(start, 6, glob ? globToRegExp(glob) : undefined, candidates);
 
@@ -256,16 +278,41 @@ export const runCommand = createTool({
   description:
     "Run a program and return its output. Use to compile, run and test the code you wrote. Give the executable and its arguments separately; there is no shell, so pipes and redirection do not work.",
   inputSchema: z.object({
-    command: z.string().describe("Executable, e.g. g++ or node"),
+    command: z
+      .string()
+      .optional()
+      .describe("Executable, e.g. g++ or node — or the whole command line"),
     args: z.array(z.string()).optional().describe("Arguments, one per element"),
+    // Not documented in the description on purpose: it is here to catch the
+    // fenced block a model attaches when it writes the command as a body
+    // rather than as JSON, not to invite that.
+    content: z.string().optional(),
   }),
   outputSchema: z.object({
     stdout: z.string(),
     stderr: z.string(),
     code: z.number(),
   }),
-  execute: async ({ command, args }) => {
-    const argv = args ?? [];
+  execute: async ({ command, args, content }) => {
+    // Models write a command line, not an argv. Measured running a plugin
+    // skill: five calls in a row arrived as
+    // `{"command":"python3 engine/docctl.py check spec.toml"}` or with the
+    // line in a fenced block, and all five were refused. Refusing what the
+    // model reliably produces is a protocol that does not work.
+    //
+    // Splitting here is not a shell: quotes group, and nothing else is
+    // special. `;` and `|` remain literal arguments, which is the whole point
+    // of not having one.
+    let line = (command ?? "").trim();
+    if (!line && typeof content === "string") line = content.trim();
+    if (!line) throw new Error("run_command needs a command");
+    let argv = args ?? [];
+    if (argv.length === 0 && /\s/.test(line)) {
+      const parts = splitCommandLine(line);
+      line = parts[0] ?? line;
+      argv = parts.slice(1);
+    }
+    command = line;
     // A program the agent just built is not something an allowlist can name
     // in advance, so anything under the project root may be run — the path is
     // still resolved through resolveInRoot, so it cannot point outside. The
@@ -357,6 +404,34 @@ async function walk(
     if (e.isDirectory()) await walk(full, depth - 1, re, out);
     else if (!re || re.test(e.name)) out.push(full);
   }
+}
+
+/**
+ * A command line into an argv, without a shell.
+ *
+ * Quotes group and are removed; everything else, `;` and `|` and `&&`
+ * included, stays a literal argument. A program named `;` does not exist, so
+ * the worst a smuggled metacharacter achieves is an argument nobody wanted.
+ */
+function splitCommandLine(line: string): string[] {
+  const out: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | undefined;
+  for (const ch of line.trim()) {
+    if (quote) {
+      if (ch === quote) quote = undefined;
+      else current += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (/\s/.test(ch)) {
+      if (current) out.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current) out.push(current);
+  return out;
 }
 
 function globToRegExp(pattern: string): RegExp {

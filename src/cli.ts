@@ -10,7 +10,7 @@ import {
   registerMcpPolicy,
   registerWriteGuard,
 } from "./hooks/logging.js";
-import { registerFileGuard } from "./hooks/file-guard.js";
+import { allowReadOutsideRoot, registerFileGuard } from "./hooks/file-guard.js";
 import {
   approvalMode,
   registerApproval,
@@ -35,6 +35,14 @@ import { formatSessions, SessionStore } from "./sessions.js";
 import { HandoffStore } from "./handoff.js";
 import { migrate, projectInstructions, settings } from "./paths.js";
 import {
+  allSkills,
+  findSkill,
+  loadPlugins,
+  renderPlugins,
+  skillPrompt,
+  type Skill,
+} from "./plugins.js";
+import {
   ObservationStore,
   renderObservations,
   seedFrom,
@@ -42,7 +50,7 @@ import {
 import { banner, readVersion, statusLine, type BannerInfo } from "./banner.js";
 import { backendKind, createBackend, type Backend } from "./backends/index.js";
 import { ToolLoop } from "./tool-loop.js";
-import { tools as localTools } from "./tools.js";
+import { allowReadRoot, tools as localTools } from "./tools.js";
 import { ensureTrusted, trustedPaths, trustStorePath, untrust } from "./trust.js";
 import {
   DEFAULT_PROFILE,
@@ -71,6 +79,7 @@ const HELP = `
     /approve [mode]    ask (default), allow, or deny — show it with no argument
     /trust [revoke]    list the trusted folders, or stop trusting this one
     /memory [query]    what earlier sessions established; a word filters it
+    /plugins           the skills that are installed, and how to call them
     /profile [name]    switch how the model works — show them with no argument
 
   autonomous
@@ -188,6 +197,12 @@ async function main(): Promise<void> {
 
   const handoffs = new HandoffStore(memory, RESOURCE_ID);
   const notes = new ObservationStore(RESOURCE_ID);
+  const plugins = loadPlugins();
+  // A skill has to be able to read the files its plugin ships with.
+  for (const plugin of plugins) {
+    allowReadRoot(plugin.root);
+    allowReadOutsideRoot(plugin.root);
+  }
   let carriedOver = false;
 
   const mcp = await connectMcp(lifecycle, { quiet: true });
@@ -408,6 +423,43 @@ async function main(): Promise<void> {
     .on("PostToolUse", () => spinner.label("thinking"))
     .on("Stop", () => spinner.stop())
     .on("StopFailure", () => spinner.stop());
+
+  /**
+   * Run a skill: its instructions become the question.
+   *
+   * The tool set narrows to what the skill asked for, and widens back
+   * afterwards whatever happened — a skill that failed halfway must not leave
+   * the session holding a tool set nobody chose.
+   */
+  const runSkill = async (skill: Skill, args: string): Promise<void> => {
+    const wanted = skill.tools;
+    if (loop) {
+      // A skill is a procedure, not a question: read the reference, look at
+      // the data, write the spec, check it, build it. Measured on doc-skill,
+      // four rounds ran out having read three files and written nothing — so
+      // a skill gets a working budget even under a thinking profile.
+      const forSkill = { ...profile, rounds: Math.max(profile.rounds, 10) };
+      const offered = toolsFor(profile, allTools);
+      const narrowed = wanted
+        ? Object.fromEntries(Object.entries(offered).filter(([n]) => wanted.includes(n)))
+        : offered;
+      loop.use(forSkill, narrowed);
+      console.log(
+        `${DIM}  ${skill.plugin}/${skill.name} · ${Object.keys(narrowed).length} tools · ${forSkill.rounds} rounds${RESET}`,
+      );
+    } else {
+      console.log(`${DIM}  ${skill.plugin}/${skill.name}${RESET}`);
+    }
+    try {
+      const text = await session.run(skillPrompt(skill, args));
+      const left = stream.started ? remainder(text, shown) : text;
+      if (left) console.log(`${stream.started ? "" : "\n"}${left}\n`);
+    } catch (e) {
+      console.error(`\x1b[31m${e instanceof Error ? e.message : String(e)}\x1b[0m\n`);
+    } finally {
+      if (loop) loop.use(profile, toolsFor(profile, allTools));
+    }
+  };
 
   // Reprinted whenever the session changes, so the id under the cursor is
   // always the one the next question will go to.
@@ -680,8 +732,21 @@ async function main(): Promise<void> {
               break;
             }
 
-            default:
-              console.log(`unknown command: /${cmd}`);
+            case "plugins":
+              console.log(renderPlugins(plugins, !process.env.NO_COLOR));
+              break;
+
+            default: {
+              // A skill is not a command this program defines, so it is looked
+              // for last — a plugin cannot shadow /exit by naming a skill exit.
+              const skill = findSkill(plugins, cmd);
+              if (!skill) {
+                console.log(`unknown command: /${cmd}`);
+                break;
+              }
+              await runSkill(skill, arg);
+              break;
+            }
           }
         } catch (e) {
           console.error(

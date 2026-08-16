@@ -156,6 +156,27 @@ try {
     () => run("run_command", { command: "../outside" }),
     /escapes the project root/,
   );
+  // A model writes a command line, not an argv. Measured running a plugin
+  // skill: five calls in a row arrived as one string and all five were
+  // refused, which is a protocol that does not work rather than a model that
+  // cannot follow one.
+  const line = await run("run_command", { command: "echo hello world" });
+  assert.equal(line.stdout.trim(), "hello world");
+
+  const quoted = await run("run_command", { command: 'echo "one arg" two' });
+  assert.equal(quoted.stdout.trim(), "one arg two", "quotes group, then go away");
+
+  // ...including when it arrives as the fenced block rather than as JSON.
+  const body = await run("run_command", { content: "echo from-a-body" });
+  assert.equal(body.stdout.trim(), "from-a-body");
+
+  await assert.rejects(() => run("run_command", {}), /needs a command/);
+
+  // Splitting a line is not having a shell: a metacharacter is still an
+  // argument, so this prints rather than deletes.
+  const asWritten = await run("run_command", { command: "echo a; rm -rf /" });
+  assert.equal(asWritten.stdout.trim(), "a; rm -rf /");
+
   // There is no shell, so metacharacters are arguments, not syntax.
   const literal = await run("run_command", {
     command: "echo",
