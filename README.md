@@ -148,10 +148,31 @@ The model is pluggable, and the two options are not equivalent.
 Select with `GAHOOLE_BACKEND=api`. Both plug into `Session.run()`, so the
 lifecycle, hooks, session management and handoff are identical either way.
 
-**AI Mode cannot call tools.** It has no function-calling surface — it returns
-prose. The local and MCP tools are still registered and their hooks still fire
-for anything the program calls itself, but the model never drives them. Use the
-`api` backend if tool use is the point.
+### Tool use without function calling
+
+AI Mode has no function-calling surface, so tools reach it as a text protocol.
+The first turn of a session carries a preamble listing the tools and this
+syntax; every answer is then scanned for it:
+
+```
+TOOL_CALL: {"tool":"read_file","input":{"path":"package.json"}}
+TOOL_RESULT: {"tool":"read_file","output":{"content":"..."}}
+```
+
+gahoole parses the call, runs it, and sends the result back as the next turn,
+up to four rounds per question. **Parsed calls take the same PreToolUse /
+PostToolUse path as native ones**, so a policy that denies a tool denies it
+here too — asking in prose does not get past the guard — and a denial is
+handed back as the tool's result so the model can choose something else.
+
+The parser tolerates the model decorating the line (`**TOOL_CALL:**`, a
+blockquote, an inline code span); the marker is plain ASCII precisely because
+it has to survive markdown rendering and being read back out of the DOM.
+
+Two costs worth knowing: each tool call is another round trip, and every round
+trip counts against the rate limit; and the composer caps input at 8192
+characters, so a large tool result is truncated before it is sent. Set
+`GAHOOLE_TOOLS=0` to turn the protocol off and get plain conversation.
 
 Its rate limit is the reason the handoff machinery exists: HTTP stays 200 and
 the answer is quietly replaced by a short error string, so the backend detects

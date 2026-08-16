@@ -13,7 +13,8 @@
     "smoke:handoff": "tsx src/smoke-handoff.ts",
     "build": "tsc",
     "prepare": "npm run build",
-    "smoke:aimode": "tsx src/smoke-aimode.ts"
+    "smoke:aimode": "tsx src/smoke-aimode.ts",
+    "smoke:tools": "tsx src/smoke-tools.ts"
   },
   "dependencies": {
     "@mastra/core": "^1.59.0",

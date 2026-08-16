@@ -15,6 +15,8 @@ import { formatSessions, SessionStore } from "./sessions.js";
 import { HandoffStore } from "./handoff.js";
 import { banner, readVersion } from "./banner.js";
 import { backendKind, createBackend, type Backend } from "./backends/index.js";
+import { ToolLoop } from "./tool-loop.js";
+import { tools as localTools } from "./tools.js";
 import { MODEL } from "./agent.js";
 
 const DIM = "\x1b[2m";
@@ -102,7 +104,13 @@ async function main(): Promise<void> {
   // The model backend. ai-mode drives a browser and needs no key; api uses
   // the Mastra agent and is the only one that can call tools.
   const kind = backendKind();
-  const backend: Backend = createBackend(kind, agent, RESOURCE_ID, () => session.id);
+  const raw = createBackend(kind, agent, RESOURCE_ID, () => session.id);
+  // The api backend calls tools natively; ai-mode gets the text protocol.
+  const allTools: Record<string, unknown> = { ...localTools, ...mcp.tools };
+  const backend: Backend =
+    kind === "ai-mode" && process.env.GAHOOLE_TOOLS !== "0"
+      ? new ToolLoop(raw, allTools, lifecycle)
+      : raw;
   Session.backend = backend;
   lifecycle.on("ProcessExit", async () => {
     await backend.close?.();
@@ -175,7 +183,7 @@ async function main(): Promise<void> {
           : carriedOver
             ? "carried over"
             : undefined,
-        tools: kind === "ai-mode" ? 0 : 2 + Object.keys(mcp.tools).length,
+        tools: Object.keys(allTools).length,
         mcpServers: mcp.servers.length,
       }),
     );

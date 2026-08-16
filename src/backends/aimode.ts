@@ -33,6 +33,12 @@ const BLOCKED = /エラーが発生したため|回答が生成されません�
 
 /** The composer is one of two textareas; the other is a 0×0 feedback field. */
 const COMPOSER = "textarea:visible";
+
+/**
+ * The composer carries maxlength="8192". Anything longer is silently cut off
+ * by the page, so cut it here where the truncation is at least visible.
+ */
+export const COMPOSER_MAX = 8000;
 const SEND = 'button[aria-label="送信"], button[aria-label="Send"]';
 
 const CONVERSATION = '[data-subtree="aimc"] [data-container-id="main-col"]';
@@ -169,11 +175,14 @@ export class AiModeBackend {
       );
       this.#started = true;
     } else {
-      // fill() sets the value without the key events Google's send handler
-      // listens for, so the prompt has to be typed.
+      // fill() sets the value without the input event Google's send handler
+      // listens for, and type() sends one keystroke at a time — which times
+      // out on anything longer than a sentence. insertText fires a single
+      // real input event with the whole string.
       const box = page.locator(COMPOSER).last();
       await box.click();
-      await box.type(prompt, { delay: 30 });
+      const text = prompt.slice(0, COMPOSER_MAX);
+      await page.keyboard.insertText(text);
       await page.waitForTimeout(300);
       const send = page.locator(SEND).first();
       if (await send.count()) await send.click();
