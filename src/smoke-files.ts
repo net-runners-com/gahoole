@@ -191,6 +191,36 @@ try {
   assert.equal(await askFor("write_file"), undefined, "'always' is remembered");
   assert.equal(answers.length, asked, "and not asked again");
 
+  // "A" turns the asking off for the rest of the session; lowercase "a" only
+  // covers the one tool, so the wide switch takes a distinct keystroke.
+  {
+    const wide = new Lifecycle();
+    let asked = 0;
+    const control = registerApproval(
+      wide,
+      async () => {
+        asked++;
+        return "A";
+      },
+      { mode: "ask" },
+    );
+    const call = (toolName: string) =>
+      wide.emitPreToolUse({
+        sessionId: "s", turnId: "t", toolCallId: "c",
+        toolName, input: { path: "a", content: "b" },
+      });
+
+    assert.equal(await call("write_file"), undefined);
+    assert.equal(control.mode, "allow", "the session is now allow");
+    assert.equal(await call("delete_file"), undefined, "and other tools too");
+    assert.equal(asked, 1, "asked once, never again");
+
+    // And it can be turned back on mid-session.
+    control.set("ask");
+    assert.equal(control.mode, "ask");
+    assert.equal(control.always.size, 0, "per-tool grants are cleared with it");
+  }
+
   // deny mode never asks at all.
   const denying = new Lifecycle();
   registerApproval(denying, async () => "y", { mode: "deny" });

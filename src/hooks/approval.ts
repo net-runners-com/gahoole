@@ -49,38 +49,63 @@ const preview = (s?: string): string => {
   return one.length > 40 ? `"${one.slice(0, 40)}…"` : `"${one}"`;
 };
 
+/** Live handle on the policy, so it can be changed without a restart. */
+export interface ApprovalControl {
+  get mode(): ApprovalMode;
+  set(mode: ApprovalMode): void;
+  /** Tools allowed for the rest of the session by answering "a". */
+  readonly always: Set<string>;
+}
+
 export function registerApproval(
   lifecycle: Lifecycle,
   ask: Ask,
   opts: { mode?: ApprovalMode; pause?: () => void; resume?: () => void } = {},
-): void {
-  const mode = opts.mode ?? approvalMode();
-  if (mode === "allow") return;
+): ApprovalControl {
+  let mode = opts.mode ?? approvalMode();
 
   // Remembered for the session, so "always" is not asked again.
   const always = new Set<string>();
+  const control: ApprovalControl = {
+    get mode() {
+      return mode;
+    },
+    set(next) {
+      mode = next;
+      if (next !== "ask") always.clear();
+    },
+    always,
+  };
 
   lifecycle.on("PreToolUse", async (e) => {
+    if (mode === "allow") return;
     if (!MUTATING.has(e.toolName)) return;
     if (always.has(e.toolName)) return;
 
     if (mode === "deny") {
-      return { deny: `${e.toolName} is disabled (GAHOOLE_APPROVE=deny)` };
+      return { deny: `${e.toolName} is disabled while approval is set to deny` };
     }
 
     opts.pause?.();
     try {
       const answer = (
-        await ask(`\n  \x1b[33m${describe(e.toolName, e.input)}\x1b[0m\n  allow? [y/N/a] `)
-      )
-        .trim()
-        .toLowerCase();
+        await ask(
+          `\n  \x1b[33m${describe(e.toolName, e.input)}\x1b[0m\n  allow? [y/N/a=this tool, A=everything] `,
+        )
+      ).trim();
 
-      if (answer === "a" || answer === "always") {
+      const lower = answer.toLowerCase();
+      // Capital A is deliberately not case-folded: turning off every check for
+      // the session should take a distinct keystroke, not a stray one.
+      if (answer === "A" || lower === "all") {
+        mode = "allow";
+        return;
+      }
+      if (lower === "a" || lower === "always") {
         always.add(e.toolName);
         return;
       }
-      if (answer === "y" || answer === "yes") return;
+      if (lower === "y" || lower === "yes") return;
       return { deny: "the user declined this change" };
     } catch {
       // No one to ask — refusing is the safe direction.
@@ -90,4 +115,6 @@ export function registerApproval(
       opts.resume?.();
     }
   });
+
+  return control;
 }

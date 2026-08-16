@@ -214,7 +214,12 @@ files go one at a time — and a short list of files (`package.json`,
 `tsconfig.json`, the tools and the guard itself) is refused outright, because
 losing those is how you lose the ability to get anything else back.
 
-3. **Approval** asks a human before anything is written or deleted. `GAHOOLE_APPROVE=ask`
+3. **Approval** asks a human before anything is written or deleted. At the
+   prompt, `y` allows this call, `a` allows that tool for the rest of the
+   session, and `A` stops asking entirely. `/approve allow|ask|deny` switches
+   it mid-session and `/approve` alone shows the current setting; `gahoole -y`
+   starts in allow. Approval time is not counted in a tool's reported
+   duration. `GAHOOLE_APPROVE=ask`
    is the default; `allow` skips it, `deny` refuses outright. Reads are never
    asked about — approving each one teaches the habit of saying yes, which is
    the failure this exists to prevent. Answering `a` allows that tool for the

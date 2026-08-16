@@ -11,7 +11,12 @@ import {
   registerWriteGuard,
 } from "./hooks/logging.js";
 import { registerFileGuard } from "./hooks/file-guard.js";
-import { approvalMode, registerApproval } from "./hooks/approval.js";
+import {
+  approvalMode,
+  registerApproval,
+  type ApprovalControl,
+  type ApprovalMode,
+} from "./hooks/approval.js";
 import { connectMcp } from "./mcp.js";
 import { onAiModeRateLimit } from "./backends/aimode.js";
 import { Spinner } from "./spinner.js";
@@ -42,6 +47,7 @@ const HELP = `
     /delete <prefix>   delete a session and its messages
     /id                print the current session id
     /handoff           show the carry-over waiting for the next session
+    /approve [mode]    ask (default), allow, or deny — show it with no argument
 
   autonomous
     /auto <goal>       plan the work, then carry it out step by step
@@ -59,6 +65,7 @@ const USAGE = `gahoole — a local agent with a Claude Code-shaped lifecycle
 
 usage
   gahoole                    start a new session
+  gahoole --allow, -y        run writes and commands without asking
   gahoole --continue, -c     resume the most recent session
   gahoole --resume <prefix>  resume a session by id prefix
   gahoole --no-banner        skip the startup art
@@ -259,7 +266,10 @@ async function main(): Promise<void> {
   // Reprinted whenever the session changes, so the id under the cursor is
   // always the one the next question will go to.
   const showStatus = () => {
-    if (stdin.isTTY) console.log(statusLine(info(), !process.env.NO_COLOR));
+    if (!stdin.isTTY) return;
+    const mode = approval?.mode ?? startMode;
+    const suffix = mode === "ask" ? "" : ` · approval: ${mode}`;
+    console.log(statusLine(info(), !process.env.NO_COLOR) + suffix);
   };
 
   const interactive = stdin.isTTY;
@@ -271,9 +281,15 @@ async function main(): Promise<void> {
   // Approval runs mid-turn, so the spinner has to get out of the way for the
   // question and come back after. Without a terminal there is no one to ask,
   // and the hook declines rather than guessing.
+  // --allow / -y starts in allow mode; without a terminal there is nobody to
+  // ask, so the hook declines rather than guessing.
+  const startMode: ApprovalMode =
+    argv.includes("--allow") || argv.includes("-y") ? "allow" : approvalMode();
+  let approval: ApprovalControl | undefined;
   if (rl) {
     const ask = rl.question.bind(rl);
-    registerApproval(lifecycle, ask, {
+    approval = registerApproval(lifecycle, ask, {
+      mode: startMode,
       pause: () => spinner.stop(),
       resume: () => spinner.start("thinking"),
     });
@@ -307,6 +323,31 @@ async function main(): Promise<void> {
             case "id":
               console.log(session.id);
               break;
+
+            case "approve": {
+              if (!approval) {
+                console.log("approval is only available in a terminal");
+                break;
+              }
+              const next = arg.toLowerCase();
+              if (!next) {
+                console.log(
+                  `  ${approval.mode}${approval.always.size ? ` · always: ${[...approval.always].join(", ")}` : ""}`,
+                );
+                break;
+              }
+              if (next !== "ask" && next !== "allow" && next !== "deny") {
+                console.log("usage: /approve [ask|allow|deny]");
+                break;
+              }
+              approval.set(next);
+              console.log(
+                next === "allow"
+                  ? "  \x1b[33mallow — writes, deletes and commands run without asking\x1b[0m"
+                  : `  ${next}`,
+              );
+              break;
+            }
 
             case "handoff": {
               const h = handoffs.read();
