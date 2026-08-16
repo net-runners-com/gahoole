@@ -5,7 +5,7 @@ tool call — with everything stored in one SQLite file.
 
 Named for Ga'Hoole, the owls' tree in *Guardians of Ga'Hoole*: a night watch
 that keeps records. Spelled without the apostrophe so it survives a package
-name. Say `gahoole`.
+name.
 
 ```
 プロセス   起動 ─────────────────────────────────── exit

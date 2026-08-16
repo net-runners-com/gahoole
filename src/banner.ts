@@ -7,9 +7,13 @@ import { fileURLToPath } from "node:url";
  * Startup banner.
  *
  * Three widths, because a banner that wraps is worse than no banner: the full
- * wordmark, a compact one, and a single line. Anything that is not an
+ * wordmark, a stacked header, and a single line. Anything that is not an
  * interactive terminal gets nothing at all — piping `gahoole` into a file
- * should not produce escape codes and an owl.
+ * should not produce escape codes and block art.
+ *
+ * The wordmark is drawn entirely in U+2588 FULL BLOCK, so it renders the same
+ * in any monospace font rather than depending on how a given terminal draws
+ * punctuation.
  */
 
 const WORDMARK = [
@@ -19,9 +23,6 @@ const WORDMARK = [
   "██    ██ ██   ██ ██   ██ ██    ██ ██    ██ ██      ██     ",
   " ██████  ██   ██ ██   ██  ██████   ██████  ███████ ███████",
 ];
-
-/** Ga'Hoole is a tree full of owls; the tool may as well have one. */
-const OWL = ["  ,_,  ", " (o,o) ", " {`\"'} ", ' -"-"- ', "       "];
 
 const RESET = "\x1b[0m";
 const DIM = "\x1b[2m";
@@ -87,23 +88,19 @@ export function renderBanner(
     return `${c(BOLD, "gahoole")} ${c(DIM, `v${info.version}`)}\n`;
   }
 
-  // < 72 columns: skip the wordmark, keep the owl.
+  // < 72 columns: the wordmark would wrap, so drop to a stacked header.
   if (columns < 72) {
-    // The owl rows are already a fixed width — trimming them would leave the
-    // face ragged against the text column.
-    const lines = [
-      `${c(AMBER, OWL[0]!)} ${c(BOLD, "gahoole")}`,
-      `${c(AMBER, OWL[1]!)} ${c(DIM, `v${info.version} · ${info.model}`)}`,
-      `${c(AMBER, OWL[2]!)} ${c(DIM, shortenPath(info.cwd))}`,
-      `${c(AMBER, OWL[3]!)} ${c(DIM, session)}`,
-    ];
-    return `${lines.join("\n")}\n`;
+    return (
+      [
+        c(AMBER, "gahoole"),
+        c(DIM, `  v${info.version} · ${info.model}`),
+        c(DIM, `  ${shortenPath(info.cwd)}`),
+        c(DIM, `  ${session}`),
+      ].join("\n") + "\n"
+    );
   }
 
-  const art = WORDMARK.map(
-    (row, i) => `${c(AMBER, OWL[i] ?? "       ")} ${c(BOLD, row)}`,
-  ).join("\n");
-
+  const art = WORDMARK.map((row) => c(AMBER, row)).join("\n");
   return `${art}\n\n  ${c(DIM, facts)}\n  ${c(DIM, session)}\n`;
 }
 
