@@ -642,5 +642,44 @@ assert.equal(parsePlan(Array.from({ length: 40 }, (_, i) => `${i}. step number $
   );
 }
 
+// ===========================================================================
+// the question does not come back inside the answer
+// ===========================================================================
+//
+// The conversation container holds both sides, so on the first turn — with no
+// previous text to diff against — what comes back begins with the page's
+// rendering of what was just typed. With tools attached that is a
+// two-thousand-character preamble, and it was printed above every answer.
+{
+  const { dropQuestionForTest } = await import("./backends/aimode.js");
+  const asked = [
+    "You are running inside a program that can execute tools for you.",
+    "",
+    "Available tools:",
+    "- read_file(path, offset, limit) Read a UTF-8 text file.",
+    "",
+    "使えるplugin教えて",
+  ].join("\n");
+
+  // The page rewraps what it renders, so the echo comes back as one run of
+  // words with different line breaks — matching has to survive that.
+  const echoed = [
+    "メイン コンテンツにスキップ",
+    "AI モードの会話: You are running inside a program that can execute tools for you. Available tools: - read_file(path, offset, limit) Read a UTF-8 text file. 使えるplugin教えて",
+    "利用可能なプラグインは以下の通りです。",
+  ].join("\n");
+
+  const out = dropQuestionForTest(echoed, asked);
+  assert.equal(out, "利用可能なプラグインは以下の通りです。");
+  assert.ok(!out.includes("read_file(path"), "the preamble is gone");
+  assert.ok(!out.includes("メイン コンテンツ"), "and so is what the page put in front of it");
+
+  // An answer that never echoed the question is left alone.
+  assert.equal(dropQuestionForTest("ふつうの答え。", asked), "ふつうの答え。");
+  assert.equal(dropQuestionForTest("答え", undefined), "答え");
+  // A question too short to identify is not worth guessing at.
+  assert.equal(dropQuestionForTest("はい。", "2+2"), "はい。");
+}
+
 console.log("ok — protocol: calls, bodies, budgets, plans, verdicts");
 process.exit(0);

@@ -211,7 +211,12 @@ export class ToolLoop implements Backend {
 
     let nudged = false;
     let ran = 0;
-    for (let i = 0; i < this.#rounds; i++) {
+    /** Set when this turn asked for a skill; see the nudge below. */
+    let loadedSkill = false;
+    // The budget can grow once, when the turn turns out to be a procedure
+    // rather than a question — see the use_skill case below.
+    let rounds = this.#rounds;
+    for (let i = 0; i < rounds; i++) {
       const calls = parseCalls(answer);
 
       if (calls.length === 0) {
@@ -241,6 +246,22 @@ export class ToolLoop implements Backend {
           continue;
         }
 
+        // A turn that loaded a skill and then stopped has read a procedure
+        // and carried out none of it. The nudge below cannot catch this — it
+        // only fires when nothing ran at all, and loading the skill counts as
+        // something. Measured, this stopped after two calls, then six, then
+        // four, depending on nothing in particular.
+        if (!nudged && loadedSkill) {
+          nudged = true;
+          this.#queries++;
+          answer = await this.inner.ask(
+            "You loaded a skill and stopped without carrying it out. Its steps are " +
+              "the task, not a description of one. Do the next step now with a " +
+              `${"TOOL_CALL:"} line, and keep going until the thing it produces exists.`,
+          );
+          continue;
+        }
+
         // Or it reports the work done having called nothing at all — the
         // benchmark's most common failure, and the one a user is least likely
         // to catch, because the reply reads exactly like success.
@@ -257,6 +278,15 @@ export class ToolLoop implements Backend {
       }
 
       keep(answer);
+
+      // Loading a skill turns the turn into a procedure: read the reference,
+      // look at the data, write the spec, check it, build it. Measured, four
+      // rounds ran out having read one file — the same wall the typed
+      // /skill command hit before it was given a working budget.
+      if (calls.some((c) => c.tool === "use_skill")) {
+        if (rounds < 10) rounds = 10;
+        loadedSkill = true;
+      }
 
       // The same call, with the same arguments, twice running is not progress.
       // It is what an autonomous run looks like when it has lost track of what

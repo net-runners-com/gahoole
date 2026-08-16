@@ -215,6 +215,97 @@ export function skillPrompt(skill: Skill, args: string): string {
     .replaceAll("${ARGUMENTS}", args);
 }
 
+/**
+ * A tool that hands the model a skill's instructions.
+ *
+ * Asked "what plugins can you use", the model listed its tools — it had no
+ * way to know skills existed, because a skill was only reachable by the
+ * person typing its name. This makes them reachable from a question.
+ *
+ * The result is the instructions themselves, so the model reads them and
+ * carries them out in the same turn with the tools it already has. That is
+ * what a skill is: something to follow, not something to call.
+ */
+export function createSkillTool(
+  plugins: Plugin[],
+  createTool: typeof import("@mastra/core/tools").createTool,
+  z: typeof import("zod").z,
+) {
+  const skills = allSkills(plugins);
+  if (skills.length === 0) return undefined;
+
+  // What each skill is *for* goes in the first sentence, because that is all
+  // of a description the preamble keeps — `describeTool` cuts at the first
+  // ". ". Naming the skills was not enough: asked for a spreadsheet from a
+  // CSV, the model wrote its own Python and produced a CSV, because "doc"
+  // told it nothing about what doc does.
+  const gist = (s: Skill): string => {
+    const first = (s.description.split(/[。.]\s|。/)[0] ?? "").trim();
+    return first.length > 70 ? `${first.slice(0, 70)}…` : first;
+  };
+  const listed = skills.map((s) => `${s.name}（${gist(s)}）`).join("、 ");
+
+  return createTool({
+    id: "use_skill",
+    description:
+      `Load one of these skills and follow its instructions rather than working the task out yourself — ` +
+      `${listed} — when the request is one of those things.`,
+    inputSchema: z.object({
+      name: z.string().describe("Which skill"),
+      args: z.string().optional().describe("What the skill should work on"),
+    }),
+    outputSchema: z.object({ skill: z.string(), instructions: z.string() }),
+    execute: async (input: { name: string; args?: unknown }) => {
+      const skill = findSkill(plugins, input.name);
+      if (!skill) {
+        throw new Error(
+          `no skill called ${input.name}. There is: ${skills.map((s) => s.name).join(", ")}`,
+        );
+      }
+      // Models pass an object here about as often as a string, and refusing
+      // one of the two shapes costs a round to no purpose.
+      const args =
+        typeof input.args === "string"
+          ? input.args
+          : input.args
+            ? JSON.stringify(input.args)
+            : "";
+      return {
+        skill: skill.name,
+        // Said in the result, because of where the result lands. A skill
+        // invoked by name arrives as the question and is followed; the same
+        // text arriving as a tool result reads as reference material, and
+        // measured runs stopped halfway through it. The difference is not the
+        // words but what they are framed as, so the frame is stated.
+        instructions:
+          `These are your instructions for this task. Carry them out now, ` +
+          `step by step, using the tools — do not summarise them and do not ` +
+          `ask which step to start with.\n\n${skillPrompt(skill, args)}`,
+      };
+    },
+  });
+}
+
+/**
+ * The line that rides on every question when skills are installed.
+ *
+ * The tool description was not enough. Asked twice for a spreadsheet from a
+ * CSV, with `use_skill` in the preamble and the skills named and described,
+ * the model wrote its own pandas both times — "Excel にして" has a strong
+ * prior and one line in a two-thousand-character preamble does not beat it.
+ * The reminder is restated with every question and is a fifth the length, so
+ * a line here carries far more weight.
+ */
+export function skillsHint(plugins: Plugin[]): string {
+  const skills = allSkills(plugins);
+  if (skills.length === 0) return "";
+  const names = skills.map((s) => s.name).join(", ");
+  return (
+    `[Installed skills: ${names}. If what is asked is one of the things a skill does, ` +
+    `call use_skill first and follow what it says — do not write your own program to do it.]`
+  );
+}
+
 export function renderPlugins(plugins: Plugin[], color = true): string {
   if (plugins.length === 0) {
     return "  (no plugins — put one in ~/.gahoole/plugins/, or name it in settings.json)";

@@ -208,6 +208,46 @@ const CHROME = [
   /^\s*(?:text|bash|sh|python|javascript|typescript|json|cpp|c\+\+)\s*$(?=\n```)/gm,
 ];
 
+/**
+ * Take the question back out of the answer.
+ *
+ * The conversation container holds both sides, so on the first turn — when
+ * there is no previous text to diff against — what comes back begins with the
+ * page's rendering of what was just typed. With tools attached that is a
+ * two-thousand-character preamble, and the user saw the whole of it echoed
+ * above their answer.
+ *
+ * Matched on the text with its whitespace collapsed, because the page rewraps
+ * what it renders: the prompt goes in with newlines and comes back as one
+ * run of words. What is looked for is the *end* of the question, so anything
+ * the page put in front of it goes as well.
+ */
+function dropQuestion(answer: string, asked?: string): string {
+  if (!asked) return answer;
+  const flat = (s: string) => s.replace(/\s+/g, " ").trim();
+  // The tail of the question is enough to find it, and short enough to still
+  // match when the page has truncated what it shows.
+  const needle = flat(asked).slice(-120);
+  if (needle.length < 20) return answer;
+
+  const haystack = flat(answer);
+  const at = haystack.indexOf(needle);
+  if (at === -1) return answer;
+
+  // Walk the original text until as many non-space characters have gone by as
+  // the flattened prefix holds — the two differ only in whitespace.
+  const skip = haystack.slice(0, at + needle.length).replace(/ /g, "").length;
+  let seen = 0;
+  for (let i = 0; i < answer.length; i++) {
+    if (!/\s/.test(answer[i]!)) seen++;
+    if (seen >= skip) return answer.slice(i + 1).trim();
+  }
+  return answer;
+}
+
+/** Exported for the test; the behaviour is easier to check than to trust. */
+export const dropQuestionForTest = dropQuestion;
+
 function stripChrome(text: string): string {
   let out = text;
   for (const re of CHROME) out = out.replace(re, "");
@@ -449,7 +489,7 @@ export class AiModeBackend {
       );
       this.#started = true;
       await phase("settle", () => this.#settle());
-      return phase("read", () => this.#read());
+      return phase("read", () => this.#read(prompt));
     }
 
     return this.#send(prompt);
@@ -499,11 +539,11 @@ export class AiModeBackend {
     });
     await phase("first token", () => this.#waitForGrowth(before));
     await phase("settle", () => this.#settle());
-    return phase("read", () => this.#read());
+    return phase("read", () => this.#read(text));
   }
 
   /** The part of the conversation that was not there before this turn. */
-  async #read(): Promise<string> {
+  async #read(asked?: string): Promise<string> {
 
     // Each turn appends its own conversation container, so the answer is the
     // tail that was not there before.
@@ -515,7 +555,7 @@ export class AiModeBackend {
 
     if (!fresh) throw new EmptyAnswerError();
     if (BLOCKED.test(fresh)) throw new AiModeRateLimitError();
-    return stripChrome(fresh);
+    return stripChrome(dropQuestion(fresh, asked));
   }
 
   /**

@@ -37,9 +37,11 @@ import { migrate, projectInstructions, settings } from "./paths.js";
 import {
   allSkills,
   findSkill,
+  createSkillTool,
   loadPlugins,
   renderPlugins,
   skillPrompt,
+  skillsHint,
   type Skill,
 } from "./plugins.js";
 import {
@@ -220,6 +222,14 @@ async function main(): Promise<void> {
   // Subagents are only offered when the backend can open a second
   // conversation. The tool is added to the same map it delegates, so a
   // subagent inherits every tool except the one that spawns more.
+  // Skills, reachable from a question rather than only from a typed command.
+  {
+    const { createTool } = await import("@mastra/core/tools");
+    const { z } = await import("zod");
+    const skillTool = createSkillTool(plugins, createTool, z);
+    if (skillTool) allTools["use_skill"] = skillTool;
+  }
+
   if (raw.fork && process.env.GAHOOLE_SUBAGENTS !== "0") {
     allTools[SPAWN_TOOL] = createSpawnTool({
       fork: () => raw.fork!(),
@@ -233,6 +243,10 @@ async function main(): Promise<void> {
     kind !== "api" && process.env.GAHOOLE_TOOLS !== "0"
       ? new ToolLoop(raw, allTools, lifecycle)
       : undefined;
+  // Skills are worth a line in the reminder, not only in the preamble; see
+  // the note on skillsHint.
+  const hint = skillsHint(plugins);
+  if (hint) profile = { ...profile, hint: [profile.hint, hint].filter(Boolean).join(" ") };
   loop?.use(profile, toolsFor(profile, allTools));
   const backend: Backend = loop ?? raw;
   Session.backend = backend;
