@@ -72,6 +72,7 @@ export class AiModeRateLimitError extends Error {
 interface Ctx {
   close: () => Promise<void>;
   pages: () => { length: number }[];
+  newPage: () => Promise<any>;
 }
 
 export interface AiModeOptions {
@@ -100,6 +101,8 @@ function stripChrome(text: string): string {
 export class AiModeBackend {
   #ctx?: Ctx;
   #page?: any;
+  /** Set on a fork: it borrows the parent's browser and must not close it. */
+  #borrowed = false;
   /** Conversation text as of the last answer, for diffing the next one. */
   #seen = "";
   #started = false;
@@ -140,6 +143,24 @@ export class AiModeBackend {
         /* already gone */
       }
     }
+  }
+
+  /**
+   * A second conversation in the same browser.
+   *
+   * AI Mode keeps its conversation in the page, so a subagent needs a page of
+   * its own — but not a browser of its own: a second Chromium would be a
+   * second profile, a second login and another 350MB. The fork shares the
+   * context and owns only its tab, which is why closing it must not close the
+   * parent's browser.
+   */
+  async fork(): Promise<AiModeBackend> {
+    await this.#ensure();
+    const child = new AiModeBackend(this.opts);
+    child.#ctx = this.#ctx;
+    child.#page = await this.#ctx!.newPage();
+    child.#borrowed = true;
+    return child;
   }
 
   async #ensure(): Promise<any> {
@@ -339,8 +360,14 @@ export class AiModeBackend {
 
   async close(): Promise<void> {
     const ctx = this.#ctx;
+    const page = this.#page;
     this.#ctx = undefined;
     this.#page = undefined;
+    if (this.#borrowed) {
+      // Only the tab is ours.
+      await page?.close().catch(() => {});
+      return;
+    }
     if (ctx) await ctx.close().catch(() => {});
   }
 }

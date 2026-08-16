@@ -201,6 +201,43 @@ losing those is how you lose the ability to get anything else back.
   └ write_file ok · 8ms
 ```
 
+### Subagents
+
+`spawn_agent(task)` hands a self-contained task to a second AI Mode
+conversation and returns only what it concluded:
+
+```
+› tmp-sub.txt の answer の値を subagent に調べさせて
+  ├ spawn_agent {"task":"Read tmp-sub.txt and report the value of 'answer'."}
+  ↳ subagent: Read tmp-sub.txt and report the value of 'answer'.
+  ├ read_file {"path":"tmp-sub.txt"}
+  └ read_file ok · 7ms
+  ↲ subagent done · 15.1s
+  └ spawn_agent ok · 15205ms
+
+tmp-sub.txt に記載されていた answer の値は 42 です。
+```
+
+The point is context, not speed: a subagent can read twenty files and report
+three sentences, and the parent never carries the twenty files.
+
+It opens a second **tab**, not a second browser — AI Mode keeps its
+conversation in the page, but a second Chromium would mean a second profile,
+a second login and another 350MB.
+
+Three limits, each for a reason:
+
+- **No recursion.** The child's tool set has `spawn_agent` removed, so a
+  runaway cannot spend the rate limit on grandchildren.
+- **No parallelism.** Every subagent turn is a query against the same limit;
+  two agents racing to spend it finish no sooner than one.
+- **No separate policy.** The child's tool calls fire the same PreToolUse and
+  PostToolUse, so approval still asks and the guard still refuses. Delegating
+  a task is not a way around the rules.
+
+Four subagents per session by default, three tool rounds each.
+`GAHOOLE_SUBAGENTS=0` turns the tool off.
+
 ### Images
 
 Drag an image into the terminal and ask about it. The path is pulled out of

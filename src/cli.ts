@@ -16,6 +16,7 @@ import { connectMcp } from "./mcp.js";
 import { Spinner } from "./spinner.js";
 import { bindLineOwner } from "./output.js";
 import { extractAttachments } from "./attachments.js";
+import { createSpawnTool, SPAWN_TOOL } from "./subagent.js";
 import { formatSessions, SessionStore } from "./sessions.js";
 import { HandoffStore } from "./handoff.js";
 import { banner, readVersion, statusLine, type BannerInfo } from "./banner.js";
@@ -113,8 +114,20 @@ async function main(): Promise<void> {
   // the Mastra agent and is the only one that can call tools.
   const kind = backendKind();
   const raw = createBackend(kind, agent, RESOURCE_ID, () => session.id);
+
   // The api backend calls tools natively; ai-mode gets the text protocol.
   const allTools: Record<string, unknown> = { ...localTools, ...mcp.tools };
+
+  // Subagents are only offered when the backend can open a second
+  // conversation. The tool is added to the same map it delegates, so a
+  // subagent inherits every tool except the one that spawns more.
+  if (raw.fork && process.env.GAHOOLE_SUBAGENTS !== "0") {
+    allTools[SPAWN_TOOL] = createSpawnTool({
+      fork: () => raw.fork!(),
+      tools: allTools,
+      lifecycle,
+    });
+  }
   const backend: Backend =
     kind === "ai-mode" && process.env.GAHOOLE_TOOLS !== "0"
       ? new ToolLoop(raw, allTools, lifecycle)

@@ -19,6 +19,8 @@ export interface Backend {
   ask(prompt: string, attachments?: string[]): Promise<string>;
   /** Begin a new model-side conversation, when the backend has one. */
   reset?(): void;
+  /** A second, independent conversation — what a subagent runs in. */
+  fork?(): Promise<Backend>;
   close?(): Promise<void>;
 }
 
@@ -40,8 +42,10 @@ export function createBackend(
       hl: process.env.GAHOOLE_HL,
     });
   }
-  return {
+  const api: Backend = {
     name: "claude-api",
+    // The API is stateless per call, so a fork is the same object.
+    fork: async () => api,
     async ask(prompt: string) {
       const res = await agent.generate(prompt, {
         memory: { resource: resourceId, thread: sessionIdOf() },
@@ -49,6 +53,7 @@ export function createBackend(
       return res.text ?? "";
     },
   };
+  return api;
 }
 
 export { AiModeBackend } from "./aimode.js";
