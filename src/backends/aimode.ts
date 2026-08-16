@@ -38,6 +38,22 @@ const PROFILE_ROOT = path.resolve(
 const profileFor = (n: number): string =>
   n === 0 ? PROFILE_ROOT : `${PROFILE_ROOT}-${n}`;
 
+/**
+ * The browser is gone rather than the answer being wrong.
+ *
+ * A crashed tab, a context closed underneath us, a renderer that died — all
+ * arrive as ordinary exceptions with no type to match on, so this matches the
+ * message. It is deliberately narrow: a selector that stopped resolving is
+ * *not* in here, because relaunching would just hide it.
+ */
+const CRASHED =
+  /target (?:closed|crashed)|browser has been closed|browser has disconnected|session closed|page closed|protocol error|websocket/i;
+
+export function looksLikeCrash(e: unknown): boolean {
+  const message = e instanceof Error ? e.message : String(e);
+  return CRASHED.test(message);
+}
+
 /** What AI Mode shows instead of an answer once the limit is reached. */
 const BLOCKED = /エラーが発生したため|回答が生成されませんでした|error occurred/i;
 
@@ -80,6 +96,26 @@ export function onAiModeRateLimit(
   onRateLimit = fn;
 }
 
+/**
+ * Set by the CLI to follow an answer as it is written.
+ *
+ * There is no streaming API here — the answer is read out of a page that fills
+ * in over several seconds — but `#settle` is already polling that page every
+ * 200ms to decide when it has stopped growing. Handing each poll to a listener
+ * costs nothing and turns forty seconds of silence into forty seconds of
+ * watching the answer arrive.
+ */
+let onPartial: ((text: string) => void) | undefined;
+export function onAiModePartial(fn: ((text: string) => void) | undefined): void {
+  onPartial = fn;
+}
+
+/** Set by the CLI so a crash is reported rather than looking like a long wait. */
+let onRelaunch: ((why: string) => void) | undefined;
+export function onAiModeRelaunch(fn: (why: string) => void): void {
+  onRelaunch = fn;
+}
+
 export class AiModeRateLimitError extends Error {
   /** Shaped so `classifyFailure` reads it the same way it reads a 429. */
   readonly status = 429;
@@ -100,6 +136,14 @@ export interface AiModeOptions {
   /** Locale for the AI Mode UI; only affects the page, not the answer. */
   hl?: string;
   timeoutMs?: number;
+  /** Which profile directory to start on. Used to measure one in isolation. */
+  profile?: number;
+  /**
+   * How many times a refusal may be answered by opening a fresh profile.
+   * Zero means a rate limit is reported rather than worked around — which is
+   * what `npm run ratelimit` needs, since rotation is what it is measuring.
+   */
+  maxRotations?: number;
 }
 
 /**
@@ -124,7 +168,7 @@ export class AiModeBackend {
   /** Set on a fork: it borrows the parent's browser and must not close it. */
   #borrowed = false;
   /** Which profile directory is in use; bumped when the limit is hit. */
-  #profile = 0;
+  #profile: number;
   #rotations = 0;
   /**
    * Enough of the conversation to carry across a rotation. A rotated profile
@@ -136,7 +180,9 @@ export class AiModeBackend {
   #seen = "";
   #started = false;
 
-  constructor(private readonly opts: AiModeOptions = {}) {}
+  constructor(private readonly opts: AiModeOptions = {}) {
+    this.#profile = opts.profile ?? 0;
+  }
 
   get name(): string {
     return "google-ai-mode";
@@ -240,8 +286,14 @@ export class AiModeBackend {
     let last = -1;
     let lastChange = Date.now();
     while (Date.now() < deadline) {
-      const len = (await this.#conversation()).length;
+      const all = await this.#conversation();
+      const len = all.length;
       if (len !== last) {
+        // Only the part that is new this turn, and only when someone asked.
+        if (onPartial && len > this.#seen.length) {
+          const fresh = all.startsWith(this.#seen) ? all.slice(this.#seen.length) : all;
+          onPartial(stripChrome(fresh));
+        }
         last = len;
         lastChange = Date.now();
       } else if (len > 0 && Date.now() - lastChange >= quietMs) {
@@ -382,7 +434,8 @@ export class AiModeBackend {
    * is not one more cookie away from clearing.
    */
   async ask(prompt: string, attachments: string[] = []): Promise<string> {
-    const maxRotations = Number(process.env.GAHOOLE_MAX_ROTATIONS ?? 6);
+    const maxRotations =
+      this.opts.maxRotations ?? Number(process.env.GAHOOLE_MAX_ROTATIONS ?? 6);
     const waitMs = Number(process.env.GAHOOLE_RATE_WAIT_MS ?? 120_000);
 
     for (let attempt = 0; ; attempt++) {
@@ -394,6 +447,19 @@ export class AiModeBackend {
         this.#remember(prompt, answer);
         return answer;
       } catch (e) {
+        // A dead browser is not a refused answer. Relaunching costs one query
+        // and gets the turn back; without it a crashed renderer ended the
+        // session and the conversation went to the handoff for no reason.
+        // Once only — a crash that repeats is a crash worth seeing.
+        if (looksLikeCrash(e) && !this.#relaunched) {
+          this.#relaunched = true;
+          onRelaunch?.(e instanceof Error ? e.message : String(e));
+          await this.close().catch(() => {});
+          this.#started = false;
+          this.#seen = "";
+          continue;
+        }
+
         if (!(e instanceof AiModeRateLimitError)) throw e;
         if (this.#rotations >= maxRotations) throw e;
 
@@ -414,6 +480,9 @@ export class AiModeBackend {
     }
   }
 
+  /** One relaunch per session; see the catch in `ask`. */
+  #relaunched = false;
+
   /** The last few exchanges, compact enough to prepend to a prompt. */
   #recap(): string {
     if (this.#history.length === 0) return "";
@@ -431,6 +500,8 @@ export class AiModeBackend {
     this.#started = false;
     this.#seen = "";
     this.#history = [];
+    // A new conversation gets its own relaunch, since the last one is over.
+    this.#relaunched = false;
   }
 
   async close(): Promise<void> {

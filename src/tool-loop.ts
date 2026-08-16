@@ -82,6 +82,8 @@ export class ToolLoop implements Backend {
    * query; counting tool calls instead would have hidden exactly that.
    */
   #queries = 0;
+  /** The previous round's calls, for spotting a turn going in circles. */
+  #lastCalls = "";
   readonly #hooks: ReturnType<typeof createToolHooks>;
 
   constructor(
@@ -126,6 +128,7 @@ export class ToolLoop implements Backend {
 
   reset(): void {
     this.#primed = false;
+    this.#lastCalls = "";
     this.inner.reset?.();
   }
 
@@ -233,6 +236,18 @@ export class ToolLoop implements Backend {
       }
 
       keep(answer);
+
+      // The same call, with the same arguments, twice running is not progress.
+      // It is what an autonomous run looks like when it has lost track of what
+      // it already did, and left alone it spends the rest of the budget doing
+      // it again — the benchmark's autonomous group swung between 19 and 37
+      // queries for the same three tasks, and this is one of the ways.
+      const signature = calls
+        .map((c) => `${c.tool}:${JSON.stringify(c.input)}`)
+        .join("|");
+      const repeated = signature === this.#lastCalls;
+      this.#lastCalls = signature;
+
       ran += calls.length;
       const outcomes: {
         tool: string;
@@ -250,7 +265,13 @@ export class ToolLoop implements Backend {
 
       this.#queries++;
       answer = await this.inner.ask(
-        `${results.join("\n")}\n\nContinue. Answer the original question using these results.`,
+        `${results.join("\n")}\n\n` +
+          (repeated
+            ? "You just ran exactly the same call again and got the same result. " +
+              "Repeating it will not change anything. Either move on to the next " +
+              "step, or say what is blocking you and stop.\n\n"
+            : "") +
+          "Continue. Answer the original question using these results.",
       );
     }
 

@@ -411,6 +411,26 @@ const tools = {
   assert.ok(!out.includes("TOOL_CALL"), "the markers themselves do not");
 }
 
+// --- a turn going in circles is told so ------------------------------------
+//
+// The same call with the same arguments twice running is not progress, and
+// left alone it spends the rest of the budget repeating itself.
+{
+  const same = 'TOOL_CALL: {"tool":"read_file","input":{"path":"a.txt"}}';
+  const stub = new StubBackend([same, same, "分かりました。"]);
+  const loop = new ToolLoop(stub, tools, lifecycle);
+  loop.reset();
+  await inTurn(() => loop.ask("読んで"));
+  assert.ok(
+    /same call again/.test(stub.prompts[2] ?? ""),
+    `the repeat is named:\n${stub.prompts[2]?.slice(0, 200)}`,
+  );
+  assert.ok(
+    !/same call again/.test(stub.prompts[1] ?? ""),
+    "and the first time is not",
+  );
+}
+
 console.log(
   `ok — tool protocol: ${describeTool("read_file", tools.read_file).params.join(",")} parsed, denied, bounded`,
 );

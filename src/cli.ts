@@ -18,9 +18,14 @@ import {
   type ApprovalMode,
 } from "./hooks/approval.js";
 import { connectMcp } from "./mcp.js";
-import { onAiModeRateLimit } from "./backends/aimode.js";
+import {
+  onAiModePartial,
+  onAiModeRateLimit,
+  onAiModeRelaunch,
+} from "./backends/aimode.js";
 import { Spinner } from "./spinner.js";
 import { bindLineOwner } from "./output.js";
+import { truncate } from "./tui.js";
 import { extractAttachments } from "./attachments.js";
 import { createSpawnTool, SPAWN_TOOL } from "./subagent.js";
 import { runAutonomously } from "./autonomous.js";
@@ -304,6 +309,25 @@ async function main(): Promise<void> {
         : "rate limited — waiting",
     );
   });
+
+  // A crash used to look like a very long wait.
+  onAiModeRelaunch((why) => {
+    spinner.label(`browser died (${why.slice(0, 40)}) — restarting`);
+  });
+
+  // The answer as it is written. There is no streaming API — the page fills in
+  // over several seconds and #settle is already watching it — so this shows
+  // the first line as soon as there is one, and the word count after that.
+  // Turning it off is one env var, because a terminal that is being scraped
+  // does not want a progress line.
+  if (stdout.isTTY && process.env.GAHOOLE_NO_STREAM !== "1") {
+    onAiModePartial((text) => {
+      const first = text.split("\n").find((l) => l.trim())?.trim() ?? "";
+      if (!first) return;
+      const words = text.replace(/\s+/g, "").length;
+      spinner.label(`${truncate(first, Math.max(20, (stdout.columns || 80) - 24))} · ${words}字`);
+    });
+  }
 
   lifecycle
     .on("UserPromptSubmit", () => spinner.start("thinking"))
