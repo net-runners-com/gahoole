@@ -8,16 +8,32 @@
  *
  * The second half is the part that does the work. A brief that says "do not
  * write files" is a suggestion; a tool set with no `write_file` in it is not.
- * So `reason` genuinely cannot act, and `research` genuinely cannot change
+ * So `pythia` genuinely cannot act, and `argus` genuinely cannot change
  * anything — which is also what makes them safe to leave running.
  *
- * Do not confuse this with the browser profiles the AI Mode backend rotates
- * through when it hits the rate limit. Those are Chromium user-data
+ * The names are not decoration; each one is the constraint.
+ *
+ *   athena    wisdom, and the owl this program is named after. The balanced
+ *             default, good at both counsel and craft.
+ *   pythia    the oracle at Delphi. She answers and does nothing else — which
+ *             is exactly a profile with no tools.
+ *   daedalus  the craftsman who built the labyrinth and the wings. He made
+ *             things and found out the hard way which of them flew.
+ *   argus     Panoptes, the hundred-eyed watchman. All eyes, no hands: he sees
+ *             everything and changes nothing, which is read-only.
+ *
+ * The old plain names (general, reason, build, research) still resolve, so
+ * neither muscle memory nor a script has to be retrained.
+ *
+ * Do not confuse any of this with the browser profiles the AI Mode backend
+ * rotates through when it hits the rate limit. Those are Chromium user-data
  * directories and nothing here touches them.
  */
 
 export interface Profile {
   name: string;
+  /** What it used to be called, and what it plainly is. Both still work. */
+  aliases: string[];
   /** One line, for the `/profile` list. */
   summary: string;
   /**
@@ -45,8 +61,9 @@ const WRITES = ["write_file", "edit_file", "delete_file", "run_command"];
 
 export const PROFILES: Profile[] = [
   {
-    name: "general",
-    summary: "balanced — every tool, no particular slant",
+    name: "athena",
+    aliases: ["general", "default"],
+    summary: "均衡 — wisdom and the owl; every tool, no particular slant",
     brief: "",
     hint: "",
     tools: "all",
@@ -54,8 +71,9 @@ export const PROFILES: Profile[] = [
     steps: 100,
   },
   {
-    name: "reason",
-    summary: "推論 — think it through, no tools at all",
+    name: "pythia",
+    aliases: ["reason", "oracle"],
+    summary: "推論 — the oracle speaks and does nothing else; no tools at all",
     brief: [
       "For this session, work problems out rather than looking things up.",
       "",
@@ -73,8 +91,9 @@ export const PROFILES: Profile[] = [
     steps: 3,
   },
   {
-    name: "build",
-    summary: "実装 — write it, run it, check it ran",
+    name: "daedalus",
+    aliases: ["build", "make"],
+    summary: "実装 — the craftsman; write it, run it, read what it printed",
     brief: [
       "For this session, finish things rather than propose them.",
       "",
@@ -92,8 +111,9 @@ export const PROFILES: Profile[] = [
     steps: 100,
   },
   {
-    name: "research",
-    summary: "調査 — read and search only, nothing is changed",
+    name: "argus",
+    aliases: ["research", "read"],
+    summary: "調査 — a hundred eyes and no hands; reads, never changes",
     brief: [
       "For this session, find out and report. You can read, list and search",
       "files, and you cannot change or run anything — that is deliberate, so",
@@ -114,11 +134,11 @@ export const PROFILES: Profile[] = [
   },
 ];
 
-export const DEFAULT_PROFILE = "general";
+export const DEFAULT_PROFILE = "athena";
 
 export function findProfile(name: string): Profile | undefined {
   const want = name.trim().toLowerCase();
-  return PROFILES.find((p) => p.name === want);
+  return PROFILES.find((p) => p.name === want || p.aliases.includes(want));
 }
 
 export const profileNames = (): string[] => PROFILES.map((p) => p.name);

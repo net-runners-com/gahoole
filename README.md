@@ -190,24 +190,29 @@ Claude Code switches between Haiku and Opus. There is nothing to switch to
 here — AI Mode is one model behind a browser — so a profile changes the two
 things that *are* ours: what the model is told, and what it may reach for.
 
-| | | |
-|---|---|---|
-| `general` | balanced, every tool | 4 rounds · 100 steps |
-| `reason` | 推論 — think it through, **no tools at all** | 1 round · 3 steps |
-| `build` | 実装 — write it, run it, read the output | 8 rounds · 100 steps |
-| `research` | 調査 — **read and search only**, nothing is changed | 6 rounds · 40 steps |
+The names are the constraint, not decoration.
+
+| | | | |
+|---|---|---|---|
+| `athena` | 均衡 | wisdom, and the owl this program is named after — good at both counsel and craft | every tool · 4 rounds |
+| `pythia` | 推論 | the oracle at Delphi: she answers and does nothing else | **no tools** · 1 round |
+| `daedalus` | 実装 | the craftsman who built the labyrinth and the wings, and found out which of them flew | every tool · 8 rounds |
+| `argus` | 調査 | Panoptes, the hundred-eyed watchman — all eyes, no hands | **read-only** · 6 rounds |
 
 ```
-gahoole --profile research      start in one
+gahoole --profile argus         start in one
 /profile                        list them, current one marked
-/profile build                  switch mid-session
-GAHOOLE_PROFILE=reason gahoole
+/profile daedalus               switch mid-session
+GAHOOLE_PROFILE=pythia gahoole
 ```
+
+The plain names (`general`, `reason`, `build`, `research`) still resolve, so
+nothing written before the rename has to be retrained.
 
 The tool set is the half that does the work. A brief saying "do not write
 files" is a suggestion; a tool list with no `write_file` in it is not — so
-`research` is not *told* to avoid changing things, it is not offered the means,
-and `reason` genuinely cannot act. The prose only has to describe the shape the
+`argus` is not *told* to avoid changing things, it is not offered the means,
+and `pythia` genuinely cannot act. The prose only has to describe the shape the
 tools already enforce.
 
 Each profile carries a long **brief**, sent once when it becomes active, and a

@@ -79,7 +79,7 @@ usage
   gahoole --allow, -y        run writes and commands without asking
   gahoole --continue, -c     resume the most recent session
   gahoole --resume <prefix>  resume a session by id prefix
-  gahoole --profile <name>   start in a profile (general, reason, build, research)
+  gahoole --profile <name>   start in a profile (athena, pythia, daedalus, argus)
   gahoole --trust            trust this folder without asking
   gahoole --no-banner        skip the startup art
   gahoole --version, -v      print the version
@@ -89,7 +89,7 @@ environment
   ANTHROPIC_API_KEY   required
   GAHOOLE_DB_URL      default file:./data/gahoole.db
   GAHOOLE_USER        default local-user
-  GAHOOLE_PROFILE     default general
+  GAHOOLE_PROFILE     default athena
   MCP_CONFIG          default mcp.json
   MCP_ALLOW/MCP_DENY  comma-separated MCP tool policy
   NO_COLOR            disable colour`;

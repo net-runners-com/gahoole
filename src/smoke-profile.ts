@@ -35,7 +35,17 @@ const p = (name: string) => {
 
 // --- the catalogue ----------------------------------------------------------
 assert.ok(findProfile(DEFAULT_PROFILE), "the default profile is one of them");
-assert.deepEqual(profileNames(), ["general", "reason", "build", "research"]);
+assert.deepEqual(profileNames(), ["athena", "pythia", "daedalus", "argus"]);
+// The plain names still resolve, so a script written before the rename works.
+for (const [plain, mythic] of [
+  ["general", "athena"],
+  ["reason", "pythia"],
+  ["build", "daedalus"],
+  ["research", "argus"],
+]) {
+  assert.equal(findProfile(plain!)?.name, mythic, `${plain} still finds ${mythic}`);
+}
+assert.equal(findProfile("nonesuch"), undefined);
 for (const profile of PROFILES) {
   assert.ok(profile.summary, `${profile.name} says what it is for`);
   assert.ok(profile.rounds >= 1 && profile.steps >= 1, `${profile.name} has budgets`);
@@ -43,32 +53,32 @@ for (const profile of PROFILES) {
     assert.ok(profile.brief && profile.hint, `${profile.name} carries a brief`);
   }
 }
-assert.match(renderProfiles("build", false), /› build/, "the current one is marked");
+assert.match(renderProfiles("daedalus", false), /› daedalus/, "the current one is marked");
 
 // --- tool sets are real, not advisory ---------------------------------------
 const all = { ...localTools } as Record<string, unknown>;
-assert.deepEqual(Object.keys(toolsFor(p("reason"), all)), [], "reason cannot act");
+assert.deepEqual(Object.keys(toolsFor(p("pythia"), all)), [], "pythia cannot act");
 assert.deepEqual(
-  Object.keys(toolsFor(p("build"), all)).sort(),
+  Object.keys(toolsFor(p("daedalus"), all)).sort(),
   Object.keys(all).sort(),
-  "build gets everything",
+  "daedalus gets everything",
 );
 
-const research = toolsFor(p("research"), all);
+const argus = toolsFor(p("argus"), all);
 for (const denied of ["write_file", "edit_file", "delete_file", "run_command"]) {
-  assert.ok(!(denied in research), `research cannot ${denied}`);
+  assert.ok(!(denied in argus), `argus cannot ${denied}`);
 }
 for (const kept of ["read_file", "list_files", "search_files"]) {
-  assert.ok(kept in research, `research can still ${kept}`);
+  assert.ok(kept in argus, `argus can still ${kept}`);
 }
 
 // --- what each profile actually sends ---------------------------------------
 {
-  // reason: no tool preamble at all, but the brief still arrives — the whole
+  // pythia: no tool preamble at all, but the brief still arrives — the whole
   // difference of a no-tool profile lives in the prose.
   const stub = new Stub();
   const loop = new ToolLoop(stub, all, lifecycle);
-  loop.use(p("reason"), toolsFor(p("reason"), all));
+  loop.use(p("pythia"), toolsFor(p("pythia"), all));
   await loop.ask("2+2は？");
   const first = stub.seen[0]!;
   assert.ok(first.includes("work problems out"), "the brief is sent");
@@ -83,10 +93,10 @@ for (const kept of ["read_file", "list_files", "search_files"]) {
 }
 
 {
-  // build: preamble, reminder and hint, and only the tools it is allowed.
+  // daedalus: preamble, reminder and hint, and only the tools it is allowed.
   const stub = new Stub();
   const loop = new ToolLoop(stub, all, lifecycle);
-  loop.use(p("build"), toolsFor(p("build"), all));
+  loop.use(p("daedalus"), toolsFor(p("daedalus"), all));
   await loop.ask("hello");
   const sent = stub.seen[0]!;
   assert.ok(sent.includes("TOOL_CALL:"), "the protocol is explained");
@@ -95,11 +105,11 @@ for (const kept of ["read_file", "list_files", "search_files"]) {
 }
 
 {
-  // research: the denied tools are absent from the list the model is shown,
+  // argus: the denied tools are absent from the list the model is shown,
   // which is the point — it is not told not to write, it is not offered it.
   const stub = new Stub();
   const loop = new ToolLoop(stub, all, lifecycle);
-  loop.use(p("research"), toolsFor(p("research"), all));
+  loop.use(p("argus"), toolsFor(p("argus"), all));
   await loop.ask("what is in src?");
   const sent = stub.seen[0]!;
   assert.ok(sent.includes("search_files"), "reading tools are offered");
@@ -112,18 +122,18 @@ for (const kept of ["read_file", "list_files", "search_files"]) {
   // rather than continuing under the old ones.
   const stub = new Stub();
   const loop = new ToolLoop(stub, all, lifecycle);
-  loop.use(p("build"), toolsFor(p("build"), all));
+  loop.use(p("daedalus"), toolsFor(p("daedalus"), all));
   await loop.ask("one");
   await loop.ask("two");
   assert.ok(!stub.seen[1]!.includes("finish things rather than propose"));
 
-  loop.use(p("research"), toolsFor(p("research"), all));
+  loop.use(p("argus"), toolsFor(p("argus"), all));
   await loop.ask("three");
   assert.ok(
     stub.seen[2]!.includes("find out and report"),
     "the new brief is sent on the next question",
   );
-  assert.equal(Object.keys(loop.tools).length, Object.keys(research).length);
+  assert.equal(Object.keys(loop.tools).length, Object.keys(argus).length);
 }
 
 console.log(
