@@ -564,5 +564,72 @@ assert.equal(parsePlan(Array.from({ length: 40 }, (_, i) => `${i}. step number $
   assert.ok(!find("auto/inspect").check("", read));
 }
 
+// ===========================================================================
+// streaming: a line is shown once, and only once it is finished
+// ===========================================================================
+{
+  const { LineStream, remainder } = await import("./stream.js");
+  const s = new LineStream();
+
+  // The page hands over the whole answer so far, repeatedly. The last line is
+  // still being written, so it is held until a newline shows up behind it.
+  assert.deepEqual(s.feed("こんに"), [], "a line in progress is not printed");
+  assert.deepEqual(s.feed("こんにちは"), []);
+  assert.deepEqual(s.feed("こんにちは。\n今日は"), ["こんにちは。"], "now it is finished");
+  assert.deepEqual(s.feed("こんにちは。\n今日は晴れ"), [], "and not printed twice");
+  assert.deepEqual(s.feed("こんにちは。\n今日は晴れです。\n"), ["今日は晴れです。"]);
+  assert.equal(s.started, true);
+
+  // Whatever is left when it stops growing.
+  assert.deepEqual(s.finish("こんにちは。\n今日は晴れです。\nでは。"), ["では。"]);
+  assert.deepEqual(s.finish("こんにちは。\n今日は晴れです。\nでは。"), [], "and only once");
+
+  // Marker lines are dropped: the call is rendered properly a moment later,
+  // and the raw JSON scrolling past means nothing to a person.
+  {
+    const t = new LineStream();
+    const out = t.feed(
+      [
+        "書き込みます。",
+        `${CALL_PREFIX} {"tool":"write_file","input":{"path":"a"}}`,
+        "```",
+        "hello",
+        "```",
+        "",
+      ].join("\n"),
+    );
+    assert.deepEqual(out, ["書き込みます。", "```", "hello", "```"]);
+  }
+
+  // A reply that shrank is a new reply — the backend diffs against what it has
+  // already seen, so the text restarts rather than continuing.
+  {
+    const t = new LineStream();
+    t.feed("ひとつめの答えです。\nふたつめの行。\n");
+    assert.deepEqual(t.feed("短い。\n"), ["短い。"], "the count restarts rather than skipping");
+  }
+
+  // A new reply inside the same turn: the tool loop asks more than once.
+  {
+    const t = new LineStream();
+    t.feed("読みました。\n");
+    t.next();
+    assert.deepEqual(t.feed("書きました。\n"), ["書きました。"]);
+    t.reset();
+    assert.equal(t.started, false);
+  }
+
+  // What is left to print is what was not shown, whether or not the final
+  // answer agrees with what was streamed.
+  assert.equal(remainder("a\nb\nc", ["a", "b"]), "c");
+  assert.equal(remainder("a\nb", ["a", "b"]), "", "nothing left is nothing printed");
+  assert.equal(remainder("a\nb", []), "a\nb", "and nothing streamed leaves it all");
+  assert.equal(
+    remainder("最初の返信。\n\n最後の答え。", ["最初の返信。"]),
+    "最後の答え。",
+    "the gap left behind is closed up",
+  );
+}
+
 console.log("ok — protocol: calls, bodies, budgets, plans, verdicts");
 process.exit(0);

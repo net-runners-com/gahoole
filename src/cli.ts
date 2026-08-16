@@ -25,7 +25,7 @@ import {
 } from "./backends/aimode.js";
 import { Spinner } from "./spinner.js";
 import { bindLineOwner } from "./output.js";
-import { truncate } from "./tui.js";
+import { LineStream, remainder } from "./stream.js";
 import { extractAttachments } from "./attachments.js";
 import { createSpawnTool, SPAWN_TOOL } from "./subagent.js";
 import { runAutonomously } from "./autonomous.js";
@@ -365,23 +365,41 @@ async function main(): Promise<void> {
     spinner.label(`browser died (${why.slice(0, 40)}) — restarting`);
   });
 
-  // The answer as it is written. There is no streaming API — the page fills in
-  // over several seconds and #settle is already watching it — so this shows
-  // the first line as soon as there is one, and the word count after that.
-  // Turning it off is one env var, because a terminal that is being scraped
-  // does not want a progress line.
-  if (stdout.isTTY && process.env.GAHOOLE_NO_STREAM !== "1") {
+  // The answer as it is written.
+  //
+  // There is no streaming API — the page fills in over several seconds and
+  // #settle is already polling it — so each poll hands over the whole answer
+  // so far and LineStream works out which lines are finished. A line is shown
+  // only once it has a newline behind it, because a terminal cannot take back
+  // what it printed.
+  //
+  // Off with GAHOOLE_NO_STREAM=1, and off automatically when there is no
+  // terminal: a redirect wants the answer once, not as it was assembled.
+  const stream = new LineStream();
+  const shown: string[] = [];
+  const streaming = stdout.isTTY && process.env.GAHOOLE_NO_STREAM !== "1";
+  if (streaming) {
     onAiModePartial((text) => {
-      const first = text.split("\n").find((l) => l.trim())?.trim() ?? "";
-      if (!first) return;
-      const words = text.replace(/\s+/g, "").length;
-      spinner.label(`${truncate(first, Math.max(20, (stdout.columns || 80) - 24))} · ${words}字`);
+      const lines = stream.feed(text);
+      if (lines.length === 0) return;
+      // The spinner owns the line it is drawing on, so it stands aside — and
+      // stays aside, because a spinner restarted between every line flickers
+      // more than it informs.
+      spinner.stop();
+      for (const line of lines) {
+        stdout.write(`${line}\n`);
+        shown.push(line);
+      }
     });
   }
 
   lifecycle
     .on("UserPromptSubmit", () => spinner.start("thinking"))
-    .on("PreToolUse", (e) => spinner.label(`running ${e.toolName}`))
+    .on("PreToolUse", (e) => {
+      // The next reply restarts the answer text, so the stream restarts too.
+      stream.next();
+      spinner.label(`running ${e.toolName}`);
+    })
     .on("PostToolUse", () => spinner.label("thinking"))
     .on("Stop", () => spinner.stop())
     .on("StopFailure", () => spinner.stop());
@@ -677,12 +695,20 @@ async function main(): Promise<void> {
             `\x1b[2m  attaching ${paths.length} image${paths.length > 1 ? "s" : ""}\x1b[0m`,
           );
         }
+        stream.reset();
+        shown.length = 0;
         const text = await session.run(
           prompt || "この画像について説明してください。",
           undefined,
           paths,
         );
-        console.log(`\n${text}\n`);
+        // Whatever was streamed is already on screen; print the rest. The two
+        // are not always the same — the tool loop keeps prose from several
+        // replies, and a nudged reply is dropped from the answer after it has
+        // been shown — so the difference is taken rather than assumed empty.
+        const left = stream.started ? remainder(text, shown) : text;
+        if (left) console.log(`${stream.started ? "" : "\n"}${left}\n`);
+        else if (stream.started) console.log("");
       } catch (e) {
         // StopFailure already fired; a failed turn does not end the session.
         console.error(`\x1b[31m${e instanceof Error ? e.message : e}\x1b[0m\n`);
