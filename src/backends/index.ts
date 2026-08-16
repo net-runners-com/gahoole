@@ -1,5 +1,5 @@
 import type { Agent } from "@mastra/core/agent";
-import { AiModeBackend } from "./aimode.js";
+import { AiModeBackend, AiModeRateLimitError } from "./aimode.js";
 
 /**
  * A backend turns a prompt into text. Two exist, and they are not equivalent:
@@ -65,6 +65,10 @@ function createStub(): Backend {
       }
       const reply = replies[Math.min(i, replies.length - 1)] ?? "";
       i++;
+      // The one failure worth being able to script: a rate limit is the only
+      // error the program has a whole recovery path for, and that path could
+      // not be exercised without waiting for a real one.
+      if (reply === "__RATE_LIMIT__") throw new AiModeRateLimitError();
       return reply;
     },
   };

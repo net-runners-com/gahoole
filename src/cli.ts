@@ -32,6 +32,11 @@ import { runAutonomously } from "./autonomous.js";
 import { renderPlan } from "./plan.js";
 import { formatSessions, SessionStore } from "./sessions.js";
 import { HandoffStore } from "./handoff.js";
+import {
+  ObservationStore,
+  renderObservations,
+  seedFrom,
+} from "./observations.js";
 import { banner, readVersion, statusLine, type BannerInfo } from "./banner.js";
 import { backendKind, createBackend, type Backend } from "./backends/index.js";
 import { ToolLoop } from "./tool-loop.js";
@@ -63,6 +68,7 @@ const HELP = `
     /handoff           show the carry-over waiting for the next session
     /approve [mode]    ask (default), allow, or deny — show it with no argument
     /trust [revoke]    list the trusted folders, or stop trusting this one
+    /memory [query]    what earlier sessions established; a word filters it
     /profile [name]    switch how the model works — show them with no argument
 
   autonomous
@@ -166,6 +172,7 @@ async function main(): Promise<void> {
   sessions.register(lifecycle);
 
   const handoffs = new HandoffStore(memory, RESOURCE_ID);
+  const notes = new ObservationStore(RESOURCE_ID);
   let carriedOver = false;
 
   const mcp = await connectMcp(lifecycle, { quiet: true });
@@ -245,6 +252,19 @@ async function main(): Promise<void> {
   // A rate limit ended the last session; pick up where it stopped. Resuming an
   // explicit session id means the user chose their own continuation, so the
   // handoff is left on disk for whenever they do start fresh.
+  // What earlier sessions established, whether or not one of them was cut
+  // short. A handoff is the interrupted case; this is the ordinary one.
+  {
+    const earlier = notes.recent(20);
+    if (earlier.length && !startId) {
+      await session.seedContext(seedFrom(earlier));
+      console.log(
+        `\x1b[2mcarrying ${earlier.length} note${earlier.length === 1 ? "" : "s"} ` +
+          `from earlier sessions · /memory to see them\x1b[0m`,
+      );
+    }
+  }
+
   const pending = startId ? undefined : handoffs.read();
   if (pending) {
     handoffs.take();
@@ -451,6 +471,17 @@ async function main(): Promise<void> {
               // The brief rides on the next question, so the switch costs no
               // query of its own.
               showStatus();
+              break;
+            }
+
+            case "memory": {
+              const found = arg ? notes.search(arg) : notes.recent(20);
+              console.log(renderObservations(found, !process.env.NO_COLOR));
+              if (!arg && found.length) {
+                console.log(
+                  `${DIM}  ${notes.all().length} recorded · /memory <word> to filter${RESET}`,
+                );
+              }
               break;
             }
 

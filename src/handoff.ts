@@ -3,6 +3,11 @@ import path from "node:path";
 import type { Memory } from "@mastra/memory";
 import type { Lifecycle, StopFailureEvent } from "./lifecycle.js";
 import { summarizeThread } from "./summarize.js";
+import {
+  OBSERVE_PROMPT,
+  ObservationStore,
+  parseObservations,
+} from "./observations.js";
 
 /**
  * Carrying a conversation across a rate limit.
@@ -46,6 +51,14 @@ export interface Handoff {
   digest: string;
   /** Present once a model call succeeded. */
   summary?: string;
+  /**
+   * The same session as typed one-line notes.
+   *
+   * A prose summary has to be read whole and re-read every time; notes can be
+   * carried twenty at a time, filtered by type, and cut to a budget without
+   * leaving a sentence half-finished. See observations.ts.
+   */
+  notes?: { type: string; title: string }[];
   /** True while the summary is still owed. */
   pending: boolean;
 }
@@ -215,15 +228,26 @@ export class HandoffStore {
    * a rejection as "try again later", not as an error worth surfacing.
    */
   async summarize(handoff: Handoff): Promise<Handoff> {
+    // Notes rather than a paragraph, in the shape observations.ts stores and
+    // searches. The prose summary is kept as a fallback for the case where no
+    // note line came back in a readable shape.
     const summary = await summarizeThread(
       this.memory,
       handoff.sessionId,
       this.resourceId,
-      "Summarize this conversation so a fresh session can continue it. Keep decisions made, facts the user stated, files and identifiers referenced, and anything still open. Drop pleasantries.",
+      OBSERVE_PROMPT,
     );
     if (!summary) return handoff;
 
-    const upgraded: Handoff = { ...handoff, summary, pending: false };
+    const parsed = parseObservations(summary);
+    const notes = parsed.map((o) => ({ type: o.type, title: o.title }));
+    if (notes.length > 0) {
+      // Recorded where a later session can search them, not only where this
+      // one handoff can be read.
+      new ObservationStore(this.resourceId).add(handoff.sessionId, parsed);
+    }
+
+    const upgraded: Handoff = { ...handoff, summary, notes, pending: false };
     // Only overwrite if nothing newer landed while the model was working.
     const current = this.read();
     if (current && current.createdAt === handoff.createdAt) this.#write(upgraded);
@@ -238,9 +262,11 @@ export class HandoffStore {
         : h.reason === "overloaded"
           ? "The previous session was cut short because the API was overloaded."
           : "The previous session ran out of context.";
-    const body = h.summary
-      ? `Summary of what happened:\n\n${h.summary}`
-      : `No summary was possible (the model was unavailable). Raw transcript excerpt:\n\n${h.digest}`;
+    const body = h.notes?.length
+      ? `What that session established:\n${h.notes.map((n) => `- [${n.type}] ${n.title}`).join("\n")}`
+      : h.summary
+        ? `Summary of what happened:\n\n${h.summary}`
+        : `No summary was possible (the model was unavailable). Raw transcript excerpt:\n\n${h.digest}`;
     return `${head} Continue from here.\n\n${body}`;
   }
 

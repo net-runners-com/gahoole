@@ -6,6 +6,9 @@
  * oddly specific it is because it went wrong in a measured run.
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   CALL_PREFIX,
   RESULT_PREFIX,
@@ -396,6 +399,71 @@ assert.equal(parsePlan(Array.from({ length: 40 }, (_, i) => `${i}. step number $
   assert.ok(plain.includes("✗ 2. run the program — no compiler"));
   assert.ok(!plain.includes("\x1b["), "colour is opt-in");
   assert.ok(renderPlan(tasks, true).includes("\x1b["));
+}
+
+// ===========================================================================
+// observations — what a session leaves behind
+// ===========================================================================
+{
+  const { parseObservations, ObservationStore, seedFrom, renderObservations, TYPES } =
+    await import("./observations.js");
+
+  // The lines a model is asked for, with the markdown it wraps them in.
+  const parsed = parseObservations(
+    [
+      "こちらが記録です。",
+      "OBS decide  browser profiles rotate rather than waiting out the limit",
+      "**OBS fix    #settle treated an empty page as a finished one**",
+      "- OBS find   the rate limit is keyed on the cookie, not the IP",
+      "OBS task   measure what rotation actually buys",
+      "OBS nonsense this type does not exist",
+      "OBS find   x",
+      "just prose about OBS things",
+    ].join("\n"),
+  );
+  assert.deepEqual(
+    parsed.map((o) => o.type),
+    ["decide", "fix", "find", "task"],
+    "known types only, markdown stripped, prose ignored",
+  );
+  assert.equal(parsed[1]?.title, "#settle treated an empty page as a finished one");
+  assert.ok(!parsed.some((o) => o.title === "x"), "a title too short to stand alone is dropped");
+
+  // Every type the prompt offers is a type the parser accepts.
+  for (const t of TYPES) {
+    assert.equal(parseObservations(`OBS ${t} something worth remembering`).length, 1, t);
+  }
+
+  // Stored, deduplicated, searched.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gahoole-obs-"));
+  process.env.GAHOOLE_MEMORY_DIR = dir;
+  {
+    const { ObservationStore: Store } = await import(`./observations.js?${dir}`);
+    const store = new Store("smoke") as InstanceType<typeof ObservationStore>;
+    const first = store.add("s1", parsed);
+    assert.equal(first.length, 4);
+    assert.equal(store.add("s2", parsed).length, 0, "the same note is not recorded twice");
+    assert.equal(store.all().length, 4);
+
+    assert.equal(store.search("cookie").length, 1, "searched by word");
+    assert.equal(store.search("find").length, 1, "or by type");
+    assert.equal(store.search("").length, 4);
+    assert.equal(store.recent(2).length, 2);
+
+    const ids = new Set(store.all().map((o) => o.id));
+    assert.equal(ids.size, 4, "ids are distinct");
+
+    const seed = seedFrom(store.recent(20));
+    assert.match(seed, /\[decide\]/);
+    assert.match(seed, /cookie, not the IP/);
+    assert.equal(seedFrom([]), "", "nothing recorded, nothing to say");
+
+    const shown = renderObservations(store.recent(20), false);
+    assert.ok(!shown.includes("\x1b["), "colour is opt-in here too");
+    assert.match(renderObservations([], false), /nothing recorded/);
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+  delete process.env.GAHOOLE_MEMORY_DIR;
 }
 
 console.log("ok — protocol: calls, bodies, budgets, plans, verdicts");

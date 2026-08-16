@@ -93,14 +93,30 @@ export class Session {
     };
 
     try {
+      // Mastra persists what it generates itself; nothing else does. Every
+      // other path — the browser backend, which is the default, and any
+      // executor — has to be written down here or the thread stays empty.
+      //
+      // It used to be neither. The database the README describes as holding
+      // the messages held none of them, and everything downstream inherited
+      // that: the rate-limit handoff carried one line, /compact summarized an
+      // empty conversation, and a resumed session resumed nothing.
+      let persist = false;
       const text = await turnStore.run(ctx, async () => {
-        if (executor) return executor(prompt);
-        if (Session.backend) return Session.backend.ask(prompt, attachments);
+        if (executor) {
+          persist = true;
+          return executor(prompt);
+        }
+        if (Session.backend) {
+          persist = true;
+          return Session.backend.ask(prompt, attachments);
+        }
         const res = await this.agent.generate(prompt, {
           memory: { resource: this.resourceId, thread: this.id },
         });
         return res.text ?? "";
       });
+      if (persist) await this.#save(prompt, text);
 
       await this.lifecycle.emit("Stop", {
         sessionId: this.id,
@@ -208,18 +224,37 @@ export class Session {
 
   /** Write a message into the thread without spending a turn on it. */
   async seedContext(text: string): Promise<void> {
-    await this.memory.saveMessages({
-      messages: [
-        {
-          id: randomUUID(),
-          threadId: this.id,
-          resourceId: this.resourceId,
-          role: "user",
-          type: "text",
-          content: { format: 2, parts: [{ type: "text", text }] },
-          createdAt: new Date(),
-        } as never,
-      ],
-    });
+    await this.#write([{ role: "user", text }]);
+  }
+
+  /** An exchange the model did not persist for us. */
+  async #save(prompt: string, answer: string): Promise<void> {
+    await this.#write([
+      { role: "user", text: prompt },
+      { role: "assistant", text: answer },
+    ]);
+  }
+
+  async #write(items: { role: "user" | "assistant"; text: string }[]): Promise<void> {
+    const messages = items
+      .filter((m) => m.text.trim())
+      .map((m) => ({
+        id: randomUUID(),
+        threadId: this.id,
+        resourceId: this.resourceId,
+        role: m.role,
+        type: "text",
+        content: { format: 2, parts: [{ type: "text", text: m.text }] },
+        createdAt: new Date(),
+      }));
+    if (messages.length === 0) return;
+    // A turn that answered is not a turn to lose over a write failing.
+    await this.memory
+      .saveMessages({ messages: messages as never })
+      .catch((e: unknown) => {
+        console.error(
+          `[session] could not save the exchange: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
   }
 }

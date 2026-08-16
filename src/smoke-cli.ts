@@ -29,9 +29,16 @@ interface Run {
 /** One CLI process: `input` is typed at the prompt, one line per element. */
 function run(
   input: string[],
-  opts: { args?: string[]; replies?: string[]; env?: Record<string, string> } = {},
+  opts: {
+    args?: string[];
+    replies?: string[];
+    env?: Record<string, string>;
+    /** Reuse a home from a previous run, so state carries between processes. */
+    home?: string;
+    keep?: boolean;
+  } = {},
 ): Promise<Run> {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "gahoole-cli-"));
+  const home = opts.home ?? fs.mkdtempSync(path.join(os.tmpdir(), "gahoole-cli-"));
   const work = path.join(home, "project");
   fs.mkdirSync(work, { recursive: true });
 
@@ -56,7 +63,7 @@ function run(
         },
       },
       (err, stdout, stderr) => {
-        fs.rmSync(home, { recursive: true, force: true });
+        if (!opts.keep) fs.rmSync(home, { recursive: true, force: true });
         resolve({
           stdout,
           stderr,
@@ -223,6 +230,45 @@ function run(
 
   const v = await run([], { args: ["--version"] });
   assert.match(v.stdout.trim(), /^\d+\.\d+\.\d+$/, `a version number: ${v.stdout}`);
+}
+
+// --- a rate limit is survived, not just reported ---------------------------
+//
+// This is the only failure the program has a whole recovery path for, and it
+// could not be exercised without waiting for a real one. The stub raises it on
+// cue, so the path can be walked: the turn fails, the conversation is written
+// to the handoff, and the next process picks it up rather than starting blank.
+{
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "gahoole-cli-"));
+  try {
+    const hit = await run(["越谷市の人口は？", "そのうち何割が15歳未満？", "/exit"], {
+      home,
+      keep: true,
+      replies: ["約34万人です。", "__RATE_LIMIT__"],
+    });
+    assert.match(hit.stderr + hit.stdout, /rate.?limit/i, `the limit is reported:\n${hit.stderr}`);
+
+    const saved = path.join(home, "project", "data", "handoff", "smoke.json");
+    assert.ok(fs.existsSync(saved), "the conversation is written to disk");
+    const carried = fs.readFileSync(saved, "utf8");
+    assert.match(carried, /越谷市/, "including what was being talked about");
+
+    // A new process, same folder: it should open holding what the last one
+    // was doing, and say so rather than starting blank.
+    const next = await run(["/exit"], {
+      home,
+      keep: true,
+      replies: ["続きです。"],
+    });
+    assert.match(next.stdout, /carried over/, `the next session picks it up:\n${next.stdout}`);
+    assert.ok(
+      !fs.existsSync(saved) ||
+        !fs.readFileSync(saved, "utf8").includes("越谷市"),
+      "and takes it, so it is not carried twice",
+    );
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 }
 
 console.log("ok — cli: answers, commands, profiles, approval, sessions, trust");

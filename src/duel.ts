@@ -20,6 +20,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { TASKS, type BenchTask, type Group } from "./bench-tasks.js";
+import { log } from "./output.js";
 
 const ROOT = process.cwd();
 const ARENA = path.join(ROOT, "duel-tmp");
@@ -173,6 +174,7 @@ async function makeGahoole(): Promise<{
       // Round trips, not tool calls: a reply carrying three calls costs one
       // query, and counting calls would hide the whole point of batching.
       const queriesBefore = loop.queries;
+      const spinsBefore = loop.spins;
       let answer = "";
       try {
         if (task.group === "auto") {
@@ -191,6 +193,8 @@ async function makeGahoole(): Promise<{
       }
       await session.end("exit");
       // gahoole's cost is queries against a rate limit, not dollars.
+      const spins = loop.spins - spinsBefore;
+      if (spins) log(`     ${spins} repeated round${spins === 1 ? "" : "s"}`);
       return { answer, turns: loop.queries - queriesBefore, costUSD: 0 };
     },
     close: async () => {

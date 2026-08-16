@@ -1,6 +1,7 @@
 import type { Backend } from "./backends/index.js";
 import type { Lifecycle } from "./lifecycle.js";
 import { createToolHooks } from "./agent.js";
+import { log } from "./output.js";
 import type { Profile } from "./profiles.js";
 import {
   buildPreamble,
@@ -84,6 +85,8 @@ export class ToolLoop implements Backend {
   #queries = 0;
   /** The previous round's calls, for spotting a turn going in circles. */
   #lastCalls = "";
+  /** How many times that has happened, so the effect of noticing is countable. */
+  #spins = 0;
   readonly #hooks: ReturnType<typeof createToolHooks>;
 
   constructor(
@@ -120,6 +123,11 @@ export class ToolLoop implements Backend {
 
   get queries(): number {
     return this.#queries;
+  }
+
+  /** Rounds that repeated the previous round exactly. */
+  get spins(): number {
+    return this.#spins;
   }
 
   get name(): string {
@@ -247,6 +255,15 @@ export class ToolLoop implements Backend {
         .join("|");
       const repeated = signature === this.#lastCalls;
       this.#lastCalls = signature;
+      if (repeated) {
+        this.#spins++;
+        // Said out loud: a detector nobody can see is a detector nobody can
+        // tell is working, which is exactly the position the first version of
+        // this left the measurement in.
+        log(
+          `\x1b[33m  ↺ same call again — ${calls.map((c) => c.tool).join(", ")}\x1b[0m`,
+        );
+      }
 
       ran += calls.length;
       const outcomes: {
