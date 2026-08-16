@@ -131,30 +131,46 @@ session boundary happened.
 ## Benchmark
 
 `npm run bench` runs nine tasks in three groups, each checked by code rather
-than by reading the reply.
+than by reading the reply. `npm run duel` runs the *same nine* against Claude
+Code as well, so the numbers below come from one task list and one verifier.
 
-| Group | Before | After | Note |
-|---|---|---|---|
-| reasoning (no tools) | 3/3 | 2/3 | unchanged by the fix; run-to-run variance |
-| problem solving | 1/3 | **3/3** | |
-| autonomy (dependent steps) | 1–2/3 | **3/3** | 8/8 steps unaided |
+| | reason | solve | auto | total | per task | turns | cost |
+|---|---|---|---|---|---|---|---|
+| Claude Code · haiku-4.5 | 3/3 | 3/3 | 3/3 | **9/9** | 19.2s | 28 | $0.38 |
+| Claude Code · sonnet-5 | 3/3 | 3/3 | 3/3 | **9/9** | 16.6s | 21 | $1.53 |
+| Claude Code · opus-5 | 3/3 | 3/3 | 3/3 | **9/9** | 16.8s | 19 | $2.08 |
+| gahoole (ai-mode) | 3/3 | 3/3 | 3/3 | **9/9** | 44.4s | 38 | none |
 
-The fix came from the per-task detail, not the headline: every failure had
-spent **zero tool calls** and answered from reasoning instead of acting.
-Reasoning was already 3/3, so the gap was never capability — it was doing
-rather than describing. Two changes followed. A turn that reports work while
-calling nothing now gets one demand for the real thing, and an autonomous run
-that produces no plan asks whether the goal is *actually* met and keeps going
-while it is not, rather than accepting the first summary.
+**All four score 9/9, which means the benchmark no longer separates them.**
+What it still separates is price and patience: haiku reaches the same score for
+a fifth of opus's cost, opus gets there in the fewest turns, and gahoole pays
+in wall clock and queries rather than dollars — 44s a task against 17-19s, and
+38 turns of a rate limit measured at roughly eighty per ten minutes.
 
-The cost is turns: autonomy went from 1 turn and 20s per task to 4.7 turns
-and 105s. Each of those turns is a query against a limit of roughly eighty
-per ten minutes.
+Read the comparison as **harness plus model, not model**. Claude Code has
+native tool calling and a purpose-built Read/Write/Bash toolset; gahoole types
+into a browser and parses markers out of rendered prose. The reasoning group is
+the only one where the two are close to comparable, because no tools are
+involved.
 
-**Read these numbers as nine tasks written by the same person who wrote the
-agent.** The same group scored 2/3 and 1/3 on consecutive runs before the
-fix, and reasoning scored 3/3 then 2/3 after it with no relevant change in
-between — a single pass has an error bar of about a task.
+### What the duel actually found
+
+Two harness bugs, both of which had been quietly costing scores.
+
+`--permission-mode acceptEdits` grants file edits and **not** Bash. Every task
+that had to run a program stalled on a permission that headless mode can never
+grant, and haiku and sonnet came in at 6/9 — three failures each that were the
+harness, not the model. `--allowedTools` fixed it, and the runner now records
+`permission_denials` so a refused tool can never again be read as a wrong
+answer.
+
+`#settle()` treated an empty page as a finished one. A page that had not
+started rendering looks exactly like a page that has stopped: `#waitForGrowth`
+gave up at its 8s cap, settle called it done 1.2s later, and `#read` threw
+"AI Mode returned nothing" at about 9s. It reproduced three runs out of three
+on the two questions Google renders as **math**, which are the slowest to
+appear — scoring gahoole 5-6/9 on a transport failure that had nothing to do
+with reasoning. One clause fixed it: an empty conversation is never settled.
 
 ## Storage
 

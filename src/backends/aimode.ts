@@ -265,6 +265,14 @@ export class AiModeBackend {
    * complete well before the timer expires, and every extra millisecond here
    * is felt on every question. 1200ms of no growth, sampled every 200ms, was
    * the shortest that did not truncate answers in testing.
+   *
+   * An *empty* conversation is never settled, whatever the quiet period says.
+   * Without that clause a page that has not started rendering looks exactly
+   * like a page that has finished: `#waitForGrowth` gives up at its 8s cap,
+   * settle calls it done 1.2s later, and `#read` throws "AI Mode returned
+   * nothing" at about 9s. That is what it did — reproducibly, three runs out
+   * of three, on the two benchmark questions whose answers Google renders as
+   * math, which are the slowest to appear.
    */
   async #settle(quietMs = 1200): Promise<void> {
     const page = await this.#ensure();
@@ -276,7 +284,7 @@ export class AiModeBackend {
       if (len !== last) {
         last = len;
         lastChange = Date.now();
-      } else if (Date.now() - lastChange >= quietMs) {
+      } else if (len > 0 && Date.now() - lastChange >= quietMs) {
         return;
       }
       await page.waitForTimeout(200);

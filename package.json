@@ -22,6 +22,7 @@
     "smoke:subagent": "tsx src/smoke-subagent.ts",
     "smoke:auto": "tsx src/smoke-auto.ts",
     "bench": "tsx src/bench.ts",
+    "duel": "tsx src/duel.ts",
     "smoke:ratelimit": "tsx src/smoke-ratelimit.ts"
   },
   "dependencies": {

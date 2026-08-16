@@ -25,20 +25,9 @@ import { Session } from "./session.js";
 import { tools as localTools } from "./tools.js";
 import { registerFileGuard } from "./hooks/file-guard.js";
 import { runAutonomously } from "./autonomous.js";
+import { TASKS, type Group } from "./bench-tasks.js";
 
 const DIR = path.resolve("bench-tmp");
-
-type Group = "reason" | "solve" | "auto";
-
-interface Task {
-  id: string;
-  group: Group;
-  prompt: string;
-  /** Steps a person would have to take; used for the autonomy score. */
-  steps: number;
-  setup?: () => void;
-  check: (answer: string) => boolean;
-}
 
 const read = (f: string): string => {
   try {
@@ -47,99 +36,6 @@ const read = (f: string): string => {
     return "";
   }
 };
-const has = (answer: string, ...needles: string[]): boolean =>
-  needles.some((n) => answer.toLowerCase().includes(n.toLowerCase()));
-
-const TASKS: Task[] = [
-  // --- reasoning: one checkable answer, arrived at in several hops ----------
-  {
-    id: "reason/ages",
-    group: "reason",
-    steps: 1,
-    prompt:
-      "アリスはボブより3歳年上で、ボブはキャロルの2倍の年齢です。3人の年齢の合計は33歳です。ボブは何歳ですか。数字だけ答えて。",
-    check: (a) => /\b12\b/.test(a),
-  },
-  {
-    id: "reason/schedule",
-    group: "reason",
-    steps: 1,
-    prompt:
-      "会議は9:00に始まり45分続きます。その後15分休憩し、次の会議は前の会議の2倍の長さです。2つ目の会議は何時に終わりますか。HH:MM形式で答えて。",
-    check: (a) => /11:30/.test(a),
-  },
-  {
-    id: "reason/contradiction",
-    group: "reason",
-    steps: 1,
-    prompt:
-      "「このリストの全ての数は偶数です」と言われました。リストは [2, 4, 7, 8] です。この主張は正しいですか。正しくない場合、反例の数字だけを挙げて。",
-    check: (a) => /\b7\b/.test(a),
-  },
-
-  // --- problem solving: a verifiable end state, reached with tools ----------
-  {
-    id: "solve/write",
-    group: "solve",
-    steps: 1,
-    prompt: `bench-tmp/greet.txt というファイルを作って、中身を正確に "hello gahoole" にして。`,
-    check: () => read("greet.txt").trim() === "hello gahoole",
-  },
-  {
-    id: "solve/compute",
-    group: "solve",
-    steps: 2,
-    prompt:
-      "1から50までの整数のうち、3の倍数の合計を、実際にプログラムを書いて実行して求めて。最後に数字だけを答えて。",
-    // 3+6+...+48 = 408
-    check: (a) => /\b408\b/.test(a),
-  },
-  {
-    id: "solve/fix",
-    group: "solve",
-    steps: 2,
-    setup: () =>
-      fs.writeFileSync(
-        path.join(DIR, "add.js"),
-        "function add(a, b) { return a - b; }\nconsole.log(add(2, 3));\n",
-      ),
-    prompt:
-      "bench-tmp/add.js にバグがあります。add(2,3) が 5 を出力するように直して、node で実行して確認して。",
-    check: () => /return a \+ b/.test(read("add.js")),
-  },
-
-  // --- autonomy: dependent steps, no one stepping in -----------------------
-  {
-    id: "auto/cpp",
-    group: "auto",
-    steps: 3,
-    prompt:
-      "bench-tmp/fizz.cpp に 1から15までのFizzBuzzを出力するC++を書いて、g++でコンパイルして、実行して出力を確認する",
-    check: (a) =>
-      read("fizz.cpp").includes("iostream") && has(a, "FizzBuzz", "Fizz"),
-  },
-  {
-    id: "auto/pipeline",
-    group: "auto",
-    steps: 3,
-    prompt:
-      "bench-tmp/nums.txt に 1行1つで 5,3,9,1 と書いて、node でそれを読んで昇順に並べ替えて bench-tmp/sorted.txt に書き、結果を確認する",
-    check: () => read("sorted.txt").replace(/\s+/g, ",").replace(/^,|,$/g, "") === "1,3,5,9",
-  },
-  {
-    id: "auto/inspect",
-    group: "auto",
-    steps: 2,
-    setup: () =>
-      fs.writeFileSync(
-        path.join(DIR, "data.json"),
-        JSON.stringify({ users: [{ name: "a" }, { name: "b" }, { name: "c" }] }),
-      ),
-    prompt:
-      "bench-tmp/data.json を読んで users の件数を数え、その数を bench-tmp/count.txt に書く",
-    check: () => read("count.txt").trim() === "3",
-  },
-];
 
 interface Result {
   id: string;
@@ -171,7 +67,7 @@ async function main(): Promise<void> {
   for (const task of tasks) {
     fs.rmSync(DIR, { recursive: true, force: true });
     fs.mkdirSync(DIR, { recursive: true });
-    task.setup?.();
+    task.setup?.(DIR);
 
     // A fresh conversation per task, so one failure cannot poison the next.
     raw.reset?.();
@@ -212,7 +108,7 @@ async function main(): Promise<void> {
 
     let pass = false;
     try {
-      pass = task.check(answer);
+      pass = task.check(answer, read);
     } catch {
       pass = false;
     }
