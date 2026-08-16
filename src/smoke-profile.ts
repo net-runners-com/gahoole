@@ -1,0 +1,132 @@
+/**
+ * Profiles. Offline: a stub backend records every prompt it is handed, so
+ * what the model would actually receive under each profile is asserted rather
+ * than assumed.
+ */
+import assert from "node:assert/strict";
+import { Lifecycle } from "./lifecycle.js";
+import { ToolLoop } from "./tool-loop.js";
+import { tools as localTools } from "./tools.js";
+import {
+  DEFAULT_PROFILE,
+  findProfile,
+  PROFILES,
+  profileNames,
+  renderProfiles,
+  toolsFor,
+} from "./profiles.js";
+
+class Stub {
+  readonly seen: string[] = [];
+  name = "stub";
+  reply = "nothing to do here.";
+  async ask(prompt: string): Promise<string> {
+    this.seen.push(prompt);
+    return this.reply;
+  }
+}
+
+const lifecycle = new Lifecycle();
+const p = (name: string) => {
+  const found = findProfile(name);
+  assert.ok(found, `${name} exists`);
+  return found;
+};
+
+// --- the catalogue ----------------------------------------------------------
+assert.ok(findProfile(DEFAULT_PROFILE), "the default profile is one of them");
+assert.deepEqual(profileNames(), ["general", "reason", "build", "research"]);
+for (const profile of PROFILES) {
+  assert.ok(profile.summary, `${profile.name} says what it is for`);
+  assert.ok(profile.rounds >= 1 && profile.steps >= 1, `${profile.name} has budgets`);
+  if (profile.name !== DEFAULT_PROFILE) {
+    assert.ok(profile.brief && profile.hint, `${profile.name} carries a brief`);
+  }
+}
+assert.match(renderProfiles("build", false), /› build/, "the current one is marked");
+
+// --- tool sets are real, not advisory ---------------------------------------
+const all = { ...localTools } as Record<string, unknown>;
+assert.deepEqual(Object.keys(toolsFor(p("reason"), all)), [], "reason cannot act");
+assert.deepEqual(
+  Object.keys(toolsFor(p("build"), all)).sort(),
+  Object.keys(all).sort(),
+  "build gets everything",
+);
+
+const research = toolsFor(p("research"), all);
+for (const denied of ["write_file", "edit_file", "delete_file", "run_command"]) {
+  assert.ok(!(denied in research), `research cannot ${denied}`);
+}
+for (const kept of ["read_file", "list_files", "search_files"]) {
+  assert.ok(kept in research, `research can still ${kept}`);
+}
+
+// --- what each profile actually sends ---------------------------------------
+{
+  // reason: no tool preamble at all, but the brief still arrives — the whole
+  // difference of a no-tool profile lives in the prose.
+  const stub = new Stub();
+  const loop = new ToolLoop(stub, all, lifecycle);
+  loop.use(p("reason"), toolsFor(p("reason"), all));
+  await loop.ask("2+2は？");
+  const first = stub.seen[0]!;
+  assert.ok(first.includes("work problems out"), "the brief is sent");
+  assert.ok(first.includes("2+2は？"), "along with the question");
+  assert.ok(!first.includes("TOOL_CALL:"), "and no tool protocol");
+
+  // The long brief is sent once; the one-line hint rides on every question.
+  await loop.ask("3+3は？");
+  const second = stub.seen[1]!;
+  assert.ok(!second.includes("work problems out"), "the brief is not repeated");
+  assert.ok(second.includes("Reason it through"), "the hint is");
+}
+
+{
+  // build: preamble, reminder and hint, and only the tools it is allowed.
+  const stub = new Stub();
+  const loop = new ToolLoop(stub, all, lifecycle);
+  loop.use(p("build"), toolsFor(p("build"), all));
+  await loop.ask("hello");
+  const sent = stub.seen[0]!;
+  assert.ok(sent.includes("TOOL_CALL:"), "the protocol is explained");
+  assert.ok(sent.includes("finish things rather than propose"), "so is the brief");
+  assert.ok(sent.includes("write_file"), "and write_file is on the list");
+}
+
+{
+  // research: the denied tools are absent from the list the model is shown,
+  // which is the point — it is not told not to write, it is not offered it.
+  const stub = new Stub();
+  const loop = new ToolLoop(stub, all, lifecycle);
+  loop.use(p("research"), toolsFor(p("research"), all));
+  await loop.ask("what is in src?");
+  const sent = stub.seen[0]!;
+  assert.ok(sent.includes("search_files"), "reading tools are offered");
+  assert.ok(!/\bwrite_file\(/.test(sent), "writing tools are not");
+  assert.ok(!/\bdelete_file\(/.test(sent), "nor deleting");
+}
+
+{
+  // Switching mid-session re-primes: the next question carries the new rules
+  // rather than continuing under the old ones.
+  const stub = new Stub();
+  const loop = new ToolLoop(stub, all, lifecycle);
+  loop.use(p("build"), toolsFor(p("build"), all));
+  await loop.ask("one");
+  await loop.ask("two");
+  assert.ok(!stub.seen[1]!.includes("finish things rather than propose"));
+
+  loop.use(p("research"), toolsFor(p("research"), all));
+  await loop.ask("three");
+  assert.ok(
+    stub.seen[2]!.includes("find out and report"),
+    "the new brief is sent on the next question",
+  );
+  assert.equal(Object.keys(loop.tools).length, Object.keys(research).length);
+}
+
+console.log(
+  `ok — profiles: ${PROFILES.length} defined, tool sets enforced, brief once and hint always`,
+);
+process.exit(0);

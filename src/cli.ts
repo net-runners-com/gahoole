@@ -32,6 +32,14 @@ import { backendKind, createBackend, type Backend } from "./backends/index.js";
 import { ToolLoop } from "./tool-loop.js";
 import { tools as localTools } from "./tools.js";
 import { ensureTrusted, trustedPaths, trustStorePath, untrust } from "./trust.js";
+import {
+  DEFAULT_PROFILE,
+  findProfile,
+  profileNames,
+  renderProfiles,
+  toolsFor,
+  type Profile,
+} from "./profiles.js";
 import { MODEL } from "./agent.js";
 
 const DIM = "\x1b[2m";
@@ -50,10 +58,11 @@ const HELP = `
     /handoff           show the carry-over waiting for the next session
     /approve [mode]    ask (default), allow, or deny — show it with no argument
     /trust [revoke]    list the trusted folders, or stop trusting this one
+    /profile [name]    switch how the model works — show them with no argument
 
   autonomous
     /auto <goal>       plan the work, then carry it out step by step
-                       (up to GAHOOLE_MAX_STEPS turns, default 100)
+                       (up to the profile's step ceiling, or GAHOOLE_MAX_STEPS)
 
   new session from this one
     /clear             start empty
@@ -70,6 +79,7 @@ usage
   gahoole --allow, -y        run writes and commands without asking
   gahoole --continue, -c     resume the most recent session
   gahoole --resume <prefix>  resume a session by id prefix
+  gahoole --profile <name>   start in a profile (general, reason, build, research)
   gahoole --trust            trust this folder without asking
   gahoole --no-banner        skip the startup art
   gahoole --version, -v      print the version
@@ -79,6 +89,7 @@ environment
   ANTHROPIC_API_KEY   required
   GAHOOLE_DB_URL      default file:./data/gahoole.db
   GAHOOLE_USER        default local-user
+  GAHOOLE_PROFILE     default general
   MCP_CONFIG          default mcp.json
   MCP_ALLOW/MCP_DENY  comma-separated MCP tool policy
   NO_COLOR            disable colour`;
@@ -103,6 +114,27 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+
+  // The prompt profile, not the browser profiles the AI Mode backend rotates
+  // through on a rate limit — those are Chromium data directories and are not
+  // reachable from here.
+  const profileIdx = argv.indexOf("--profile");
+  const wantProfile =
+    (profileIdx === -1 ? undefined : argv[profileIdx + 1]) ??
+    process.env.GAHOOLE_PROFILE ??
+    DEFAULT_PROFILE;
+  const startProfile = findProfile(wantProfile);
+  if (!startProfile) {
+    console.error(
+      `unknown profile "${wantProfile}" — try one of ${profileNames().join(", ")}`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  // Reassigned by /profile, so it is a binding rather than a constant — and
+  // typed, because a `let` initialised from a guarded lookup widens back to
+  // `| undefined` inside the closures below.
+  let profile: Profile = startProfile;
 
   const wantContinue = argv.includes("--continue") || argv.includes("-c");
   const resumeIdx = argv.indexOf("--resume");
@@ -153,10 +185,12 @@ async function main(): Promise<void> {
       lifecycle,
     });
   }
-  const backend: Backend =
+  const loop =
     kind === "ai-mode" && process.env.GAHOOLE_TOOLS !== "0"
       ? new ToolLoop(raw, allTools, lifecycle)
-      : raw;
+      : undefined;
+  loop?.use(profile, toolsFor(profile, allTools));
+  const backend: Backend = loop ?? raw;
   Session.backend = backend;
   lifecycle.on("ProcessExit", async () => {
     await backend.close?.();
@@ -241,7 +275,9 @@ async function main(): Promise<void> {
     cwd: process.cwd(),
     sessionId: session.id,
     origin: startId ? "resumed" : carriedOver ? "carried over" : undefined,
-    tools: Object.keys(allTools).length,
+    // What this profile can actually reach, not what exists.
+    tools: Object.keys(loop?.tools ?? allTools).length,
+    profile: profile.name,
     mcpServers: mcp.servers.length,
   });
 
@@ -360,6 +396,33 @@ async function main(): Promise<void> {
               break;
             }
 
+            case "profile": {
+              if (!arg) {
+                console.log(renderProfiles(profile.name, !process.env.NO_COLOR));
+                break;
+              }
+              const next = findProfile(arg);
+              if (!next) {
+                console.log(`  unknown profile — ${profileNames().join(", ")}`);
+                break;
+              }
+              if (!loop) {
+                console.log("  profiles only apply to the ai-mode backend");
+                break;
+              }
+              profile = next;
+              const active = toolsFor(profile, allTools);
+              loop.use(profile, active);
+              console.log(
+                `  ${profile.name} · ${profile.summary}\n` +
+                  `  ${DIM}${Object.keys(active).length} tools · ${profile.rounds} rounds${RESET}`,
+              );
+              // The brief rides on the next question, so the switch costs no
+              // query of its own.
+              showStatus();
+              break;
+            }
+
             case "trust": {
               if (arg.toLowerCase() === "revoke") {
                 const dropped = untrust(process.cwd());
@@ -404,7 +467,9 @@ async function main(): Promise<void> {
                 break;
               }
               const result = await runAutonomously(arg, {
-                maxSteps: Number(process.env.GAHOOLE_MAX_STEPS ?? 100),
+                // The profile sets the ceiling; the environment still wins,
+                // because someone who set it meant it.
+                maxSteps: Number(process.env.GAHOOLE_MAX_STEPS ?? profile.steps),
                 run: (p) => session.run(p),
                 onPlan: (tasks) =>
                   console.log(`\n${renderPlan(tasks, !process.env.NO_COLOR)}\n`),

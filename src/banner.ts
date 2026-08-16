@@ -48,6 +48,8 @@ export interface BannerInfo {
   mcpServers: number;
   /** Shown in the greeting; falls back to the OS user. */
   user?: string;
+  /** How the model has been told to work; omitted when it is the default. */
+  profile?: string;
 }
 
 export function readVersion(): string {
@@ -99,7 +101,7 @@ export function renderBanner(
     "",
     ...MARK.map((row) => c(AMBER, row)),
     "",
-    c(DIM, `${info.model} · ${toolLine}`),
+    c(DIM, `${info.model} · ${toolLine}${info.profile ? ` · ${info.profile}` : ""}`),
     c(DIM, shortenPath(info.cwd)),
     c(
       DIM,
@@ -142,9 +144,12 @@ export function statusLine(info: BannerInfo, color = true): string {
   return paint(
     [
       info.model,
+      info.profile,
       info.tools ? `${info.tools} tools` : "no tools",
       `session ${info.sessionId.slice(0, 8)}`,
-    ].join(" · "),
+    ]
+      .filter(Boolean)
+      .join(" · "),
   );
 }
 

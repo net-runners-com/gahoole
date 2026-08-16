@@ -1,6 +1,7 @@
 import type { Backend } from "./backends/index.js";
 import type { Lifecycle } from "./lifecycle.js";
 import { createToolHooks } from "./agent.js";
+import type { Profile } from "./profiles.js";
 import {
   buildPreamble,
   buildReminder,
@@ -69,15 +70,44 @@ function announcesTool(answer: string, tools: string[]): boolean {
 
 export class ToolLoop implements Backend {
   #primed = false;
+  #tools: Record<string, unknown>;
+  #rounds: number;
+  /** Sent once when the profile becomes active; see profiles.ts. */
+  #brief = "";
+  /** Restated with every question. */
+  #hint = "";
   readonly #hooks: ReturnType<typeof createToolHooks>;
 
   constructor(
     private readonly inner: Backend,
-    private readonly tools: Record<string, unknown>,
+    tools: Record<string, unknown>,
     lifecycle: Lifecycle,
-    private readonly maxIterations = 4,
+    maxIterations = 4,
   ) {
+    this.#tools = tools;
+    this.#rounds = maxIterations;
     this.#hooks = createToolHooks(lifecycle);
+  }
+
+  /**
+   * Switch profile mid-session.
+   *
+   * Both halves change together — a brief that says "you cannot write files"
+   * next to a tool list that still has `write_file` in it teaches the model
+   * that the brief is negotiable. Priming is dropped so the next question
+   * carries the new preamble; the model-side conversation is left alone, so
+   * switching profiles does not lose what has been said.
+   */
+  use(profile: Profile, tools: Record<string, unknown>): void {
+    this.#tools = tools;
+    this.#rounds = profile.rounds;
+    this.#brief = profile.brief;
+    this.#hint = profile.hint;
+    this.#primed = false;
+  }
+
+  get tools(): Record<string, unknown> {
+    return this.#tools;
   }
 
   get name(): string {
@@ -94,10 +124,18 @@ export class ToolLoop implements Backend {
   }
 
   async ask(prompt: string, attachments: string[] = []): Promise<string> {
-    if (Object.keys(this.tools).length === 0)
-      return this.inner.ask(prompt, attachments);
+    // A profile with no tools still has a brief, and it is the whole of what
+    // makes that profile different — so this returns early with the brief
+    // attached rather than with the prompt bare.
+    if (Object.keys(this.#tools).length === 0) {
+      const head = [this.#primed ? "" : this.#brief, this.#hint]
+        .filter(Boolean)
+        .join("\n\n");
+      this.#primed = true;
+      return this.inner.ask(head ? `${head}\n\n${prompt}` : prompt, attachments);
+    }
 
-    const specs = Object.entries(this.tools).map(([n, t]) => describeTool(n, t));
+    const specs = Object.entries(this.#tools).map(([n, t]) => describeTool(n, t));
 
     // The preamble rides on the first question rather than costing a turn of
     // its own. It used to be sent separately, on the theory that rules and a
@@ -105,16 +143,20 @@ export class ToolLoop implements Backend {
     // forgotten — but the per-question reminder is what actually holds the
     // behaviour, and the extra round trip doubled the latency of the first
     // question in every session.
-    const head = this.#primed
-      ? buildReminder(specs)
-      : `${buildPreamble(specs)}\n\n${buildReminder(specs)}`;
+    const head = (
+      this.#primed
+        ? [buildReminder(specs), this.#hint]
+        : [this.#brief, buildPreamble(specs), buildReminder(specs), this.#hint]
+    )
+      .filter(Boolean)
+      .join("\n\n");
     this.#primed = true;
 
     let answer = await this.inner.ask(`${head}\n\n${prompt}`, attachments);
 
     let nudged = false;
     let ran = 0;
-    for (let i = 0; i < this.maxIterations; i++) {
+    for (let i = 0; i < this.#rounds; i++) {
       const calls = parseCalls(answer);
 
       if (calls.length === 0) {
@@ -134,7 +176,7 @@ export class ToolLoop implements Backend {
         // nothing, and the user sees a turn that ended with an intention. One
         // nudge is enough to convert it into the call it meant to make;
         // nudging twice would just spend the rate limit on insistence.
-        if (!nudged && announcesTool(answer, Object.keys(this.tools))) {
+        if (!nudged && announcesTool(answer, Object.keys(this.#tools))) {
           nudged = true;
           answer = await this.inner.ask(
             `You described using a tool but did not emit the ${"TOOL_CALL:"} line, so nothing ran. Emit it now, on its own line, with no other text.`,
@@ -181,7 +223,7 @@ export class ToolLoop implements Backend {
       return { output: decision.output };
     }
 
-    const tool = this.tools[name] as
+    const tool = this.#tools[name] as
       | {
           execute?: (input: unknown, ctx?: unknown) => Promise<unknown>;
           inputSchema?: { shape?: Record<string, { isOptional?: () => boolean }> };

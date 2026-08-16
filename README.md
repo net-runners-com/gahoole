@@ -184,6 +184,41 @@ The model is pluggable, and the two options are not equivalent.
 Select with `GAHOOLE_BACKEND=api`. Both plug into `Session.run()`, so the
 lifecycle, hooks, session management and handoff are identical either way.
 
+### Profiles
+
+Claude Code switches between Haiku and Opus. There is nothing to switch to
+here — AI Mode is one model behind a browser — so a profile changes the two
+things that *are* ours: what the model is told, and what it may reach for.
+
+| | | |
+|---|---|---|
+| `general` | balanced, every tool | 4 rounds · 100 steps |
+| `reason` | 推論 — think it through, **no tools at all** | 1 round · 3 steps |
+| `build` | 実装 — write it, run it, read the output | 8 rounds · 100 steps |
+| `research` | 調査 — **read and search only**, nothing is changed | 6 rounds · 40 steps |
+
+```
+gahoole --profile research      start in one
+/profile                        list them, current one marked
+/profile build                  switch mid-session
+GAHOOLE_PROFILE=reason gahoole
+```
+
+The tool set is the half that does the work. A brief saying "do not write
+files" is a suggestion; a tool list with no `write_file` in it is not — so
+`research` is not *told* to avoid changing things, it is not offered the means,
+and `reason` genuinely cannot act. The prose only has to describe the shape the
+tools already enforce.
+
+Each profile carries a long **brief**, sent once when it becomes active, and a
+one-line **hint** restated with every question — AI Mode drops instructions
+from earlier turns far more readily than it drops the question in front of it.
+Switching mid-session re-primes, so the next question carries the new rules and
+the switch itself costs no query. The model-side conversation is left intact.
+
+This has nothing to do with the browser profiles the backend rotates through on
+a rate limit; those are Chromium data directories.
+
 ### Trusting a folder
 
 The first time gahoole starts in a directory it asks before doing anything
