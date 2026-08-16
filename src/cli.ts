@@ -1,4 +1,5 @@
 import readline from "node:readline/promises";
+import { readFileSync } from "node:fs";
 import { stdin, stdout } from "node:process";
 import { Lifecycle } from "./lifecycle.js";
 import { createAgent, createMemory } from "./agent.js";
@@ -12,7 +13,11 @@ import {
 import { connectMcp } from "./mcp.js";
 import { formatSessions, SessionStore } from "./sessions.js";
 import { HandoffStore } from "./handoff.js";
+import { banner, readVersion } from "./banner.js";
 import { MODEL } from "./agent.js";
+
+const DIM = "\x1b[2m";
+const RESET = "\x1b[0m";
 
 const RESOURCE_ID = process.env.GAHOOLE_USER ?? "local-user";
 
@@ -34,12 +39,32 @@ const HELP = `
   /help  /exit
 `;
 
-const USAGE = `usage: gahoole [--continue] [--resume <prefix>]`;
+const USAGE = `gahoole — a local agent with a Claude Code-shaped lifecycle
+
+usage
+  gahoole                    start a new session
+  gahoole --continue, -c     resume the most recent session
+  gahoole --resume <prefix>  resume a session by id prefix
+  gahoole --no-banner        skip the startup art
+  gahoole --version, -v      print the version
+  gahoole --help, -h         this text
+
+environment
+  ANTHROPIC_API_KEY   required
+  GAHOOLE_DB_URL      default file:./data/gahoole.db
+  GAHOOLE_USER        default local-user
+  MCP_CONFIG          default mcp.json
+  MCP_ALLOW/MCP_DENY  comma-separated MCP tool policy
+  NO_COLOR            disable colour`;
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.includes("--help") || argv.includes("-h")) {
     console.log(USAGE);
+    return;
+  }
+  if (argv.includes("--version") || argv.includes("-v")) {
+    console.log(readVersion());
     return;
   }
   const wantContinue = argv.includes("--continue") || argv.includes("-c");
@@ -69,7 +94,7 @@ async function main(): Promise<void> {
   const handoffs = new HandoffStore(memory, RESOURCE_ID, MODEL);
   let carriedOver = false;
 
-  const mcp = await connectMcp(lifecycle);
+  const mcp = await connectMcp(lifecycle, { quiet: true });
   registerMcpPolicy(lifecycle, mcp.servers);
   const agent = createAgent(lifecycle, memory, mcp.tools);
 
@@ -124,19 +149,40 @@ async function main(): Promise<void> {
     },
   });
 
-  const rl = readline.createInterface({ input: stdin, output: stdout });
-  console.log(`\x1b[1mgahoole\x1b[0m — /help for session commands\n`);
+  if (!argv.includes("--no-banner")) {
+    stdout.write(
+      banner({
+        version: readVersion(),
+        model: MODEL,
+        cwd: process.cwd(),
+        sessionId: session.id,
+        origin: startId
+          ? "resumed"
+          : carriedOver
+            ? "carried over"
+            : undefined,
+        tools: 2 + Object.keys(mcp.tools).length,
+        mcpServers: mcp.servers.length,
+      }),
+    );
+  }
+
+  const interactive = stdin.isTTY;
+  const rl = interactive
+    ? readline.createInterface({ input: stdin, output: stdout })
+    : undefined;
+  const batchInput = interactive ? "" : readFileSync(0, "utf8");
+  if (interactive) {
+    console.log(`\n${DIM}/help for commands, /exit to leave${RESET}\n`);
+  }
 
   let exitCode = 0;
-  try {
-    while (true) {
-      let line: string;
-      try {
-        line = (await rl.question("› ")).trim();
-      } catch {
-        break; // Ctrl-D
-      }
-      if (!line) continue;
+
+  /** Handle one line of input. Returns false when the session should end. */
+  const handleLine = async (raw: string): Promise<boolean> => {
+    const line = raw.trim();
+    {
+      if (!line) return true;
 
       if (line.startsWith("/")) {
         const [cmd = "", ...rest] = line.slice(1).split(/\s+/);
@@ -146,7 +192,7 @@ async function main(): Promise<void> {
           switch (cmd) {
             case "exit":
             case "quit":
-              throw { done: true };
+              return false;
 
             case "help":
               console.log(HELP);
@@ -255,25 +301,46 @@ async function main(): Promise<void> {
               console.log(`unknown command: /${cmd}`);
           }
         } catch (e) {
-          if ((e as { done?: boolean })?.done) break;
           console.error(
             `\x1b[31m${e instanceof Error ? e.message : String(e)}\x1b[0m`,
           );
         }
-        continue;
+        return true;
       }
 
       try {
         const text = await session.run(line);
         console.log(`\n${text}\n`);
       } catch (e) {
-        // StopFailure already fired; the loop survives a failed turn.
+        // StopFailure already fired; a failed turn does not end the session.
         console.error(`\x1b[31m${e instanceof Error ? e.message : e}\x1b[0m\n`);
         exitCode = 1;
       }
+      return true;
+    }
+  };
+
+  try {
+    if (interactive) {
+      while (true) {
+        let line: string;
+        try {
+          line = await rl!.question("› ");
+        } catch {
+          break; // Ctrl-D
+        }
+        if (!(await handleLine(line))) break;
+      }
+    } else {
+      // Piped input runs as a script: every line in order, then exit. Reading
+      // it up front rather than through readline keeps this path independent
+      // of whatever else in the process is attached to stdin.
+      for (const line of batchInput.split("\n")) {
+        if (!(await handleLine(line))) break;
+      }
     }
   } finally {
-    rl.close();
+    rl?.close();
     await session.end("exit");
     await lifecycle.emit("ProcessExit", { code: exitCode, sessions: opened });
   }

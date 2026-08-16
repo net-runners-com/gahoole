@@ -81,6 +81,28 @@ function toDefinition(entry: McpServerEntry): ServerDefinition {
   } as ServerDefinition;
 }
 
+/**
+ * Shutting down an MCP server means waiting on a child process, and a child
+ * that ignores the close can hang the exit path forever. Bound it: a server
+ * that will not stop in time is left to the OS.
+ */
+async function withTimeout(p: Promise<unknown>, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      p,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ms);
+        timer.unref?.();
+      }),
+    ]);
+  } catch {
+    /* a disconnect that throws is still a disconnect */
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export interface McpBundle {
   tools: Record<string, unknown>;
   servers: string[];
@@ -92,7 +114,10 @@ export interface McpBundle {
  * and skipped — one broken MCP server should not stop the agent from running
  * with the tools that did connect.
  */
-export async function connectMcp(lifecycle?: Lifecycle): Promise<McpBundle> {
+export async function connectMcp(
+  lifecycle?: Lifecycle,
+  opts: { quiet?: boolean } = {},
+): Promise<McpBundle> {
   const config = loadConfig();
   const names = Object.keys(config);
   if (names.length === 0) {
@@ -120,18 +145,15 @@ export async function connectMcp(lifecycle?: Lifecycle): Promise<McpBundle> {
   }
 
   const connected = Object.keys(servers);
-  console.log(
-    `\x1b[2m[mcp] ${connected.length} server(s), ${Object.keys(tools).length} tool(s): ${Object.keys(tools).join(", ") || "none"}\x1b[0m`,
-  );
-  lifecycle?.on("ProcessExit", async () => {
-    await client.disconnect().catch(() => {});
-  });
+  if (!opts.quiet) {
+    console.log(
+      `\x1b[2m[mcp] ${connected.length} server(s), ${Object.keys(tools).length} tool(s): ${Object.keys(tools).join(", ") || "none"}\x1b[0m`,
+    );
+  }
+  const disconnect = () => withTimeout(client.disconnect(), 2000);
+  lifecycle?.on("ProcessExit", disconnect);
 
-  return {
-    tools,
-    servers: connected,
-    disconnect: () => client.disconnect(),
-  };
+  return { tools, servers: connected, disconnect };
 }
 
 /** Server name from a namespaced MCP tool name (`github_create_issue` → `github`). */

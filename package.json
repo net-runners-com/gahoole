@@ -10,7 +10,9 @@
     "smoke": "tsx src/smoke.ts",
     "smoke:mcp": "tsx src/smoke-mcp.ts",
     "demo": "tsx src/demo.ts",
-    "smoke:handoff": "tsx src/smoke-handoff.ts"
+    "smoke:handoff": "tsx src/smoke-handoff.ts",
+    "build": "tsc",
+    "prepare": "npm run build"
   },
   "dependencies": {
     "@mastra/core": "^1.59.0",
@@ -26,5 +28,11 @@
   },
   "bin": {
     "gahoole": "./bin/gahoole.js"
-  }
+  },
+  "files": [
+    "dist",
+    "bin",
+    "mcp.json.example",
+    "README.md"
+  ]
 }
