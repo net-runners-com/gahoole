@@ -110,6 +110,26 @@ export function renderBox(opts: BoxOptions): string {
   return [top, ...rows, bottom].join("\n");
 }
 
+/**
+ * Break text into lines of at most `w` printed cells, on spaces. A word longer
+ * than the width is left over-long rather than cut, since the only things that
+ * long are paths and URLs, and half of one of those is useless.
+ */
+export function wrap(text: string, w: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (line && width(line) + 1 + width(word) > w) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = line ? `${line} ${word}` : word;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
 /** Centre within `w` printed cells. */
 export function center(s: string, w: number): string {
   const gap = Math.max(0, w - width(s));

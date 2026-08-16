@@ -184,6 +184,47 @@ The model is pluggable, and the two options are not equivalent.
 Select with `GAHOOLE_BACKEND=api`. Both plug into `Session.run()`, so the
 lifecycle, hooks, session management and handoff are identical either way.
 
+### Trusting a folder
+
+The first time gahoole starts in a directory it asks before doing anything
+there:
+
+```
+────────────────────────────────────────────────────────────────
+
+Accessing workspace:
+
+/Users/you/work/some-repo
+
+Quick safety check: is this a folder you made, or one you trust — your own
+code, a well-known open source project, work from your team? …
+
+❯ 1. Yes, I trust this folder
+  2. No, exit
+
+Enter to confirm · Esc to cancel
+```
+
+Arrows or `1`/`2` to choose, Enter to confirm, Esc to leave. The check runs
+before the memory store is created and before MCP connects, because both of
+those act on the folder — `mcp.json` in particular names commands that get
+launched, and asking afterwards would be asking after the fact.
+
+The answer is recorded in `~/.gahoole/trusted.json`, deliberately outside every
+project: a trust file living inside the folder being judged is written by that
+folder, so an untrusted repository could simply ship one saying it is trusted.
+Subdirectories inherit the answer — you trust a repository, not each of its
+directories.
+
+| | |
+|---|---|
+| `gahoole --trust` | record this folder without asking |
+| `/trust` | list the trusted folders |
+| `/trust revoke` | stop trusting this one |
+
+Piped input has nobody to ask, so an untrusted folder is refused rather than
+assumed; `--trust` is the way to say it once in a script.
+
 ### Local file tools
 
 | Tool | What it does |

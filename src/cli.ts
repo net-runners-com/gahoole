@@ -31,6 +31,7 @@ import { banner, readVersion, statusLine, type BannerInfo } from "./banner.js";
 import { backendKind, createBackend, type Backend } from "./backends/index.js";
 import { ToolLoop } from "./tool-loop.js";
 import { tools as localTools } from "./tools.js";
+import { ensureTrusted, trustedPaths, trustStorePath, untrust } from "./trust.js";
 import { MODEL } from "./agent.js";
 
 const DIM = "\x1b[2m";
@@ -48,6 +49,7 @@ const HELP = `
     /id                print the current session id
     /handoff           show the carry-over waiting for the next session
     /approve [mode]    ask (default), allow, or deny — show it with no argument
+    /trust [revoke]    list the trusted folders, or stop trusting this one
 
   autonomous
     /auto <goal>       plan the work, then carry it out step by step
@@ -68,6 +70,7 @@ usage
   gahoole --allow, -y        run writes and commands without asking
   gahoole --continue, -c     resume the most recent session
   gahoole --resume <prefix>  resume a session by id prefix
+  gahoole --trust            trust this folder without asking
   gahoole --no-banner        skip the startup art
   gahoole --version, -v      print the version
   gahoole --help, -h         this text
@@ -93,6 +96,14 @@ async function main(): Promise<void> {
     console.log(readVersion());
     return;
   }
+  // Before anything reads, writes or launches out of this folder — the memory
+  // store creates data/ and connectMcp runs whatever mcp.json names, both of
+  // which are actions on a directory we have not been told we may act on.
+  if (!(await ensureTrusted(process.cwd(), { assume: argv.includes("--trust") }))) {
+    process.exitCode = 1;
+    return;
+  }
+
   const wantContinue = argv.includes("--continue") || argv.includes("-c");
   const resumeIdx = argv.indexOf("--resume");
   const wantResume = resumeIdx === -1 ? undefined : argv[resumeIdx + 1];
@@ -346,6 +357,26 @@ async function main(): Promise<void> {
                   ? "  \x1b[33mallow — writes, deletes and commands run without asking\x1b[0m"
                   : `  ${next}`,
               );
+              break;
+            }
+
+            case "trust": {
+              if (arg.toLowerCase() === "revoke") {
+                const dropped = untrust(process.cwd());
+                console.log(
+                  dropped
+                    ? `  ${process.cwd()} is no longer trusted — it will ask again next time`
+                    : "  this folder was trusted through a parent directory, not on its own",
+                );
+                break;
+              }
+              const paths = trustedPaths();
+              console.log(
+                `  ${paths.length} trusted folder${paths.length === 1 ? "" : "s"} ${DIM}(${trustStorePath})${RESET}`,
+              );
+              for (const p of paths) {
+                console.log(`  ${p === process.cwd() ? "›" : " "} ${p}`);
+              }
               break;
             }
 

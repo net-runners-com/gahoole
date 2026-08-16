@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Gahoole — a local agent with a Claude Code-shaped lifecycle: process, session, turn, tool call.",
+  "description": "Gahoole \u2014 a local agent with a Claude Code-shaped lifecycle: process, session, turn, tool call.",
   "scripts": {
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
@@ -17,6 +17,7 @@
     "smoke:tools": "tsx src/smoke-tools.ts",
     "smoke:spinner": "tsx src/smoke-spinner.ts",
     "smoke:files": "tsx src/smoke-files.ts",
+    "smoke:trust": "tsx src/smoke-trust.ts",
     "smoke:subagent": "tsx src/smoke-subagent.ts",
     "smoke:auto": "tsx src/smoke-auto.ts",
     "bench": "tsx src/bench.ts",
