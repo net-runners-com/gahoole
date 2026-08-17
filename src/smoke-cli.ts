@@ -18,14 +18,17 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(HERE, "cli.ts");
-// On Windows the bin is a .cmd shim, and execFile cannot run a shell script.
-const TSX = path.join(
-  HERE,
-  "..",
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tsx.cmd" : "tsx",
-);
+// node --import tsx, rather than the tsx bin.
+//
+// On Windows that bin is a .cmd shim, and since the fix for CVE-2024-27980
+// Node refuses to spawn one without a shell: every test in this file came
+// back with an empty stdout, then with EINVAL. Loading tsx into this Node is
+// the same thing without a shim, on every platform.
+//
+// Resolved to an absolute URL, because `--import tsx` is resolved from the
+// working directory and every test here sets that to a temporary project.
+const NODE = process.execPath;
+const LOADER = ["--import", import.meta.resolve("tsx")];
 
 interface Run {
   stdout: string;
@@ -64,8 +67,8 @@ function run(
 
   return new Promise((resolve) => {
     const child = execFile(
-      TSX,
-      [CLI, "--no-banner", "--trust", ...(opts.args ?? [])],
+      NODE,
+      [...LOADER, CLI, "--no-banner", "--trust", ...(opts.args ?? [])],
       {
         cwd: work,
         timeout: 90_000,
@@ -218,8 +221,8 @@ function run(
   fs.mkdirSync(work, { recursive: true });
   const r = await new Promise<Run>((resolve) => {
     const child = execFile(
-      TSX,
-      [CLI, "--no-banner"],
+      NODE,
+      [...LOADER, CLI, "--no-banner"],
       {
         cwd: work,
         timeout: 60_000,
