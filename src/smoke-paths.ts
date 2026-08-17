@@ -35,15 +35,38 @@ try {
   // A directory name for a working directory: unambiguous, reversible by eye,
   // and different for two checkouts of the same repository, which is the point
   // — they are different work.
-  assert.equal(slugFor("/Users/x/work/proj"), "-Users-x-work-proj");
-  assert.equal(
-    slugFor("/Users/x/.superset/projects/googleai"),
-    "-Users-x--superset-projects-googleai",
-    "a dotted directory becomes a second dash, as ~/.claude/projects does it",
-  );
-  assert.notEqual(slugFor("/a/proj"), slugFor("/b/proj"), "two checkouts stay apart");
+  //
+  // Spelled out per platform rather than built from path.resolve, which would
+  // be the function again rather than a test of it. An absolute POSIX path is
+  // not absolute on Windows — path.resolve puts the drive in front of it, and
+  // asserting the POSIX answer there was testing the operating system.
+  if (path.sep === "/") {
+    assert.equal(slugFor("/Users/x/work/proj"), "-Users-x-work-proj");
+    assert.equal(
+      slugFor("/Users/x/.superset/projects/googleai"),
+      "-Users-x--superset-projects-googleai",
+      "a dotted directory becomes a second dash, as ~/.claude/projects does it",
+    );
+  } else {
+    assert.equal(slugFor("C:\\Users\\x\\work\\proj"), "C--Users-x-work-proj");
+    assert.equal(
+      slugFor("C:\\Users\\x\\.superset\\googleai"),
+      "C--Users-x--superset-googleai",
+      "the drive letter's colon goes the same way as a separator",
+    );
+    assert.notEqual(
+      slugFor("C:\\work\\proj"),
+      slugFor("D:\\work\\proj"),
+      "and two drives are two places",
+    );
+  }
+  const here = path.resolve("proj");
+  const there = path.resolve("..", "elsewhere", "proj");
+  assert.notEqual(slugFor(here), slugFor(there), "two checkouts stay apart");
   assert.equal(slugFor("relative"), slugFor(path.resolve("relative")), "always absolute");
-  assert.ok(!slugFor("/a/b").includes("/"), "and never a path itself");
+  for (const ch of ["/", "\\", ":", "."]) {
+    assert.ok(!slugFor(here).includes(ch), `and never a path itself (${ch})`);
+  }
 
   // --- one directory per project ---------------------------------------------
   {
