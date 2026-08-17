@@ -467,6 +467,73 @@ const tools = {
   assert.match(out, /選びます。/, "and the prose it chose with is kept");
 }
 
+// --- a write with no contents is asked for the contents --------------------
+//
+// Four rewordings of the protocol did not stop a model emitting the call line
+// and nothing under it. Telling it to resend the call gets the same call,
+// because the call was never the missing part.
+{
+  const stub = new StubBackend([
+    'TOOL_CALL: {"tool":"write_file","input":{"path":"a.py"}}',
+    "```python\nprint('hello')\n```",
+    "書きました。",
+  ]);
+  const loop = new ToolLoop(stub, tools, lifecycle);
+  loop.reset();
+  await inTurn(() => loop.ask("a.py を書いて"));
+
+  assert.match(
+    stub.prompts[1] ?? "",
+    /contents of a\.py/,
+    `the contents are asked for by name: ${stub.prompts[1]?.slice(0, 80)}`,
+  );
+  const results = stub.prompts.find((p) => p.includes("TOOL_RESULT:")) ?? "";
+  assert.match(results, /write_file/, "and the write then runs");
+  assert.ok(
+    !results.includes("missing content"),
+    `with the contents that came back:\n${results.slice(0, 200)}`,
+  );
+}
+
+// --- a program written and not run is not finished -------------------------
+//
+// Asked for a spreadsheet, a turn wrote seven kilobytes of openpyxl and
+// stopped — twice, consistently — and described the file as though it
+// existed. Nothing else catches it: something changed, so the "nothing
+// happened" nudge stays quiet, and the reply reads like success.
+{
+  const stub = new StubBackend([
+    'TOOL_CALL: {"tool":"write_file","input":{"path":"make.py","content":"print(1)"}}',
+    "スクリプトを作成しました。",
+    'TOOL_CALL: {"tool":"run_command","input":{"command":"python3","args":["make.py"]}}',
+    "1 と出力されました。",
+  ]);
+  const loop = new ToolLoop(stub, tools, lifecycle);
+  loop.reset();
+  const out = await inTurn(() => loop.ask("スクリプトを作って"));
+  assert.match(
+    stub.prompts[2] ?? "",
+    /wrote make\.py and did not run it/,
+    `it is told what it left undone: ${stub.prompts[2]?.slice(0, 90)}`,
+  );
+  assert.match(out, /1 と出力されました/, "and the run's answer is what comes back");
+}
+
+// A program that was written and run gets no such nudge.
+{
+  const stub = new StubBackend([
+    [
+      'TOOL_CALL: {"tool":"write_file","input":{"path":"make.py","content":"print(1)"}}',
+      'TOOL_CALL: {"tool":"run_command","input":{"command":"python3","args":["make.py"]}}',
+    ].join("\n"),
+    "できました。",
+  ]);
+  const loop = new ToolLoop(stub, tools, lifecycle);
+  loop.reset();
+  await inTurn(() => loop.ask("スクリプトを作って動かして"));
+  assert.equal(stub.prompts.length, 2, "no follow-up was needed");
+}
+
 console.log(
   `ok — tool protocol: ${describeTool("read_file", tools.read_file).params.join(",")} parsed, denied, bounded`,
 );

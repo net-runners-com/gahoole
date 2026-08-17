@@ -9,6 +9,7 @@ import {
   buildReminder,
   describeTool,
   formatResults,
+  parseBody,
   parseCalls,
   parseMalformed,
   stripCalls,
@@ -67,6 +68,9 @@ function claimsWork(answer: string): boolean {
  * where they are said.
  */
 const CONTINUE = "Continue. Answer the original question using these results.";
+
+/** A file that exists to be run rather than to be read. */
+const RUNNABLE = /\.(py|js|mjs|ts|sh|rb|pl)$/i;
 
 /** Tools that leave something behind. Reading is not doing. */
 const CHANGES = new Set([
@@ -232,6 +236,11 @@ export class ToolLoop implements Backend {
     let ran = 0;
     /** Has any call actually changed something, rather than looked at it? */
     let changed = false;
+    /** Follow-ups spent asking for a file's contents; see below. */
+    let bodiesAsked = 0;
+    /** A program this turn wrote, if it has not been run. */
+    let wrote: string | undefined;
+    let ranSomething = false;
     // The budget can grow once, when the turn turns out to be a procedure
     // rather than a question — see the use_skill case below.
     let rounds = this.#rounds;
@@ -265,6 +274,29 @@ export class ToolLoop implements Backend {
           continue;
         }
 
+        // A program was written and never run.
+        //
+        // Asked for a spreadsheet, the turn wrote seven kilobytes of openpyxl
+        // and stopped — twice, consistently. The file it was asked for did
+        // not exist, and the reply described it as though it did. Nothing
+        // above catches this: something changed, so the "nothing happened"
+        // nudge stays quiet, and the reply reads like success.
+        //
+        // Narrow on purpose. A script that was written and not run is the
+        // one case where the program can tell the job is unfinished without
+        // knowing what the job was.
+        if (!nudged && wrote && !ranSomething) {
+          nudged = true;
+          this.#queries++;
+          answer = await this.inner.ask(
+            `You wrote ${wrote} and did not run it, so whatever it makes does ` +
+              `not exist yet. Run it now with ${"TOOL_CALL:"} run_command and ` +
+              `read what it printed. If it is not meant to be run, say so in ` +
+              `one sentence.`,
+          );
+          continue;
+        }
+
         // Or it reports the work done having called nothing at all — the
         // benchmark's most common failure, and the one a user is least likely
         // to catch, because the reply reads exactly like success.
@@ -290,6 +322,38 @@ export class ToolLoop implements Backend {
       // tried to do the thing, and telling it nothing happened would be worse
       // advice than letting it report the refusal.
       if (calls.some((c) => CHANGES.has(c.tool))) changed = true;
+      if (calls.some((c) => c.tool === "run_command")) ranSomething = true;
+      for (const c of calls) {
+        const p = (c.input as { path?: string }).path;
+        if (c.tool === "write_file" && p && RUNNABLE.test(p)) wrote = p;
+      }
+
+      // A write with no contents: ask for them, rather than for the call
+      // again.
+      //
+      // Four rewordings of the protocol did not stop this. Asked for a
+      // spreadsheet, the model replied with sixty-seven characters — the
+      // write_file line and nothing under it — three times running, then said
+      // the environment was broken. The writes that did work were all short;
+      // the ones that failed were all long programs. Telling it to resend the
+      // call gets the same call, because the call was never the missing part.
+      //
+      // So the missing part is what gets asked for, on its own, in the shape
+      // it is already producing: one thing per reply.
+      for (const call of calls) {
+        const input = call.input as Record<string, unknown>;
+        if (call.tool !== "write_file" || typeof input.content === "string") continue;
+        if (bodiesAsked >= 2) continue;
+        bodiesAsked++;
+        this.#queries++;
+        const sent = await this.inner.ask(
+          `Send the contents of ${String(input.path ?? "that file")} now — the ` +
+            `whole file, in one fenced code block, and nothing else. No ` +
+            `${"TOOL_CALL:"} line, no explanation, just the block.`,
+        );
+        const body = parseBody(sent);
+        if (body) input.content = body;
+      }
 
       // Loading a skill turns the turn into a procedure: read the reference,
       // look at the data, write the spec, check it, build it. Measured, four

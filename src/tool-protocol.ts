@@ -145,7 +145,12 @@ export function buildPreamble(tools: ToolSpec[]): string {
     "followed by JSON naming the tool and its input:",
     `${CALL_PREFIX} {"tool":"read_file","input":{"path":"README.md"}}`,
     "",
-    "Write it as plain text, not in a code block, and end your reply there.",
+    // "End your reply there" and "put the contents in a block on the next
+    // line" cannot both be obeyed, and a model asked to write a file obeyed
+    // the first: it emitted the call, stopped, and the file was created empty.
+    // Twice in a row, with a paragraph of intent in front of each.
+    "Write it as plain text, not in a code block. Nothing follows the call",
+    "except the block carrying a file's contents, when there is one.",
     "",
     "You may write several of these lines in one reply, and you should whenever",
     "the steps do not need to see each other's output — write a file and run it,",
@@ -153,12 +158,21 @@ export function buildPreamble(tools: ToolSpec[]): string {
     "together, which is one round trip instead of three. A code block belongs to",
     "the line directly above it.",
     "",
-    "For file contents, leave `content` out of the JSON and put the text in a",
-    "fenced code block on the next line. Quotes, newlines and angle brackets",
-    "all survive there, and none of them survive anywhere else:",
+    "To write a file, put its whole text in `content`:",
+    `${CALL_PREFIX} {"tool":"write_file","input":{"path":"hello.py","content":"print(1)"}}`,
+    "",
+    // The block was the first instruction and the JSON the fallback, on the
+    // strength of one C++ file whose quotes broke the JSON. Recordings say
+    // that was backwards: every write that worked had its text in `content`,
+    // and every call that followed the block instruction arrived as 67
+    // characters of call line with no block behind it — three times in a row
+    // before the model gave up and blamed the environment.
+    "If the text has quotes or backslashes that would break that JSON, leave",
+    "`content` out and put the text in a fenced block on the next line",
+    "instead. A call with neither writes nothing at all:",
     `${CALL_PREFIX} {"tool":"write_file","input":{"path":"main.cpp"}}`,
     "```cpp",
-    "#include <iostream>",
+    'std::cout << "hi\\n";',
     "```",
     `I will reply with a ${RESULT_PREFIX} line containing the output, and then`,
     "you continue. If no tool is needed, just answer normally.",
@@ -168,6 +182,11 @@ export function buildPreamble(tools: ToolSpec[]): string {
     "  that announces a tool without the line does nothing at all.",
     "- Never write the output of a tool you have not run, and never describe a",
     "  result you have not been given. If you need it, call the tool.",
+    "- You have no way to produce a file except through these tools. Asked for",
+    "  a spreadsheet, this replied \"Here is your file:\" and described one it",
+    "  had made — and there was nothing on disk, because nothing had been",
+    "  written. Write the program that makes it, run the program, read what it",
+    "  printed.",
     "- Keep going until the task is done. Do not stop to ask permission for",
     "  steps the task already implies.",
   ].join("\n");
@@ -187,7 +206,11 @@ export function buildReminder(tools: ToolSpec[]): string {
   return [
     `[Tools you can run here: ${names}.`,
     `If this asks you to create, change, delete, run or inspect anything, you must call a tool — describing it does not do it, and you cannot know a file's contents or a program's output without reading or running it.`,
-    `Reply with ${CALL_PREFIX} lines and nothing else — as many as the next steps need, in order. Do not search the web. If the request is only a question, answer it normally.]`,
+    `You cannot make a file yourself and there is nothing to attach or download here: a file exists only once ${CALL_PREFIX} write_file has run with its contents in a block below the line.`,
+    // "Nothing else" forbade the very block a write needs, and the model
+    // obeyed it exactly: three write_file calls in a row, each 67 characters
+    // long, each the call line and no contents.
+    `Reply with ${CALL_PREFIX} lines — as many as the next steps need, in order — and put a file's text in \`content\`, or in a fenced block under the line when quotes would break the JSON. Nothing besides those. Do not search the web. If the request is only a question, answer it normally.]`,
   ].join(" ");
 }
 
