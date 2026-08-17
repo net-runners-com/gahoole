@@ -59,13 +59,6 @@ const tests = files
 
 /** Exported, untested, and why. */
 const ALLOWED: Record<string, string> = {
-  // Single-slot setters for things a browser run reports: a rate limit, a
-  // relaunch, a partial answer, an empty one. There is no getter, so nothing
-  // is observable without driving a browser.
-  onAiModeRateLimit: "only observable during a browser run",
-  onAiModeRelaunch: "only observable during a browser run",
-  onAiModePartial: "only observable during a browser run",
-  onAiModeEmpty: "only observable during a browser run",
 };
 
 const named = (name: string): boolean =>

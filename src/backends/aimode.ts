@@ -4,6 +4,7 @@ import { launchPersistentContext } from "cloakbrowser";
 import { readConversation } from "./extract.js";
 import { isInterrupted, stopHere } from "../interrupt.js";
 import { inProject } from "../paths.js";
+import { notifier } from "../notify.js";
 
 /**
  * Google AI Mode (`udm=50`) as the model backend.
@@ -234,12 +235,10 @@ async function phase<T>(name: string, fn: () => Promise<T>): Promise<T> {
 }
 
 /** Set by the CLI so a rotation is visible rather than a silent two-minute gap. */
-let onRateLimit: ((rotation: number, rotating: boolean) => void) | undefined;
-export function onAiModeRateLimit(
+const rateLimit = notifier<[number, boolean]>("rate limit");
+export const onAiModeRateLimit = (
   fn: (rotation: number, rotating: boolean) => void,
-): void {
-  onRateLimit = fn;
-}
+): (() => void) => rateLimit.add(fn);
 
 /**
  * Set by the CLI to follow an answer as it is written.
@@ -250,22 +249,19 @@ export function onAiModeRateLimit(
  * costs nothing and turns forty seconds of silence into forty seconds of
  * watching the answer arrive.
  */
-let onPartial: ((text: string) => void) | undefined;
-export function onAiModePartial(fn: ((text: string) => void) | undefined): void {
-  onPartial = fn;
-}
+const partial = notifier<[string]>("partial");
+export const onAiModePartial = (
+  fn: ((text: string) => void) | undefined,
+): (() => void) => partial.add(fn);
 
 /** Set by the CLI so a crash is reported rather than looking like a long wait. */
-let onRelaunch: ((why: string) => void) | undefined;
-export function onAiModeRelaunch(fn: (why: string) => void): void {
-  onRelaunch = fn;
-}
+const relaunch = notifier<[string]>("relaunch");
+export const onAiModeRelaunch = (fn: (why: string) => void): (() => void) =>
+  relaunch.add(fn);
 
 /** Set by the CLI so a retried question is visible rather than just slow. */
-let onEmpty: (() => void) | undefined;
-export function onAiModeEmpty(fn: () => void): void {
-  onEmpty = fn;
-}
+const empty = notifier<[]>("empty");
+export const onAiModeEmpty = (fn: () => void): (() => void) => empty.add(fn);
 
 export class AiModeRateLimitError extends Error {
   /** Shaped so `classifyFailure` reads it the same way it reads a 429. */
@@ -582,14 +578,14 @@ export class AiModeBackend {
       if (len !== last) {
         if (last !== -1) bursts++;
         // Only the part that is new this turn, and only when someone asked.
-        if (onPartial && len > this.#seen.length) {
+        if (partial.listening && len > this.#seen.length) {
           const fresh = all.startsWith(this.#seen) ? all.slice(this.#seen.length) : all;
           // Nothing is streamed until the question has finished echoing.
           // Without this the terminal got the preamble a line at a time while
           // a pipe, which does not stream, printed a clean answer — which is
           // how this survived being fixed twice.
           const part = afterQuestion(fresh, asked);
-          if (part !== undefined) onPartial(stripChrome(part));
+          if (part !== undefined) partial.emit(stripChrome(part));
         }
         last = len;
         lastChange = Date.now();
@@ -801,7 +797,7 @@ export class AiModeBackend {
         // refusal killed a whole benchmark task because nothing retried it.
         if (e instanceof AiModeRefusedError && !this.#retriedRefusal) {
           this.#retriedRefusal = true;
-          onEmpty?.();
+          empty.emit();
           this.#started = false;
           this.#seen = "";
           await sleep(1200);
@@ -810,7 +806,7 @@ export class AiModeBackend {
 
         if (e instanceof EmptyAnswerError && !this.#retriedEmpty) {
           this.#retriedEmpty = true;
-          onEmpty?.();
+          empty.emit();
           this.#started = false;
           this.#seen = "";
           continue;
@@ -818,7 +814,7 @@ export class AiModeBackend {
 
         if (looksLikeCrash(e) && !this.#relaunched) {
           this.#relaunched = true;
-          onRelaunch?.(e instanceof Error ? e.message : String(e));
+          relaunch.emit(e instanceof Error ? e.message : String(e));
           await this.close().catch(() => {});
           this.#started = false;
           this.#seen = "";
@@ -830,7 +826,7 @@ export class AiModeBackend {
 
         this.#rotations++;
         const rotating = this.#rotations <= maxRotations;
-        onRateLimit?.(this.#rotations, rotating);
+        rateLimit.emit(this.#rotations, rotating);
 
         await this.close();
         this.#profile++;
