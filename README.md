@@ -42,13 +42,26 @@ npm run dev            # or: npm link && gahoole
 | `npm run smoke:spinner` | frames, label changes, sharing the line | no |
 | `npm run smoke:ratelimit` | rotation policy, bounded retries | no |
 | `npm run smoke:cli` | the CLI end to end: commands, profiles, approval, sessions, trust, migration | no |
-| `npm run smoke:dom` | reading an answer out of real Chromium, against a fixture | local only |
-| `npm run smoke:mcp` | MCP connect, namespacing, policy denial | local only |
+| `npm run smoke:dom` | reading an answer out of real Chromium, against a fixture | yes, on all three |
+| `npm run smoke:mcp` | MCP connect, namespacing, policy denial | no |
+| `npm run smoke:subagent` | delegation, recursion refused, the cap | no |
+| `npm run smoke:plugins` | manifests, frontmatter, tool mapping, symlinks, the skill tool | no |
+| `npm run smoke:notify` | several listeners, stopping, clearing, a listener that throws | no |
+| `npm run smoke:exports` | every export is named by a test, or listed with a reason | no |
 | `npm run smoke:aimode` | two real AI Mode turns, context preserved | **yes** |
 | `npm run canary` | the selectors still resolve and the page still answers | **yes** |
 
 `npm run smoke:offline` runs everything that needs nothing; `npm run smoke:all`
-adds the browser. CI runs both on every push.
+adds the browser; `npm run smoke:live` is the two that ask Google real
+questions, and costs about four queries.
+
+CI runs the offline suite and the browser one on Linux, Windows and macOS, and
+packs the tarball and installs it into a directory with a space in its name.
+The live pair is not in CI and cannot be: it needs a profile Google will
+answer, from an address it will answer, and each run spends queries against a
+limit measured at about 98 per profile. Run it by hand when the page might
+have changed — the canary names the selector that broke rather than reporting
+a symptom.
 
 ### Recording a session
 
