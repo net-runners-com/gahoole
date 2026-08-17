@@ -451,10 +451,22 @@ export class AiModeBackend {
     const deadline = Date.now() + (this.opts.timeoutMs ?? 90_000);
     let last = -1;
     let lastChange = Date.now();
+    let bursts = 0;
     while (Date.now() < deadline) {
       const all = await this.#conversation();
       const len = all.length;
+
+      // Returning early when the text ends on a full stop was tried and
+      // reverted. A greeting is complete 1.4s after sending and settle sits
+      // until 2.6s, so there is a second to win — but an answer that opens
+      // "日本の47都道府県の県庁所在地の一覧です。" and then lists them arrives as an
+      // intro burst ending in exactly that full stop, and the rule cut the
+      // list off. Measured: 21 characters instead of the whole thing. A slow
+      // answer is better than a wrong one, so the quiet period stands.
+      void bursts;
+
       if (len !== last) {
+        if (last !== -1) bursts++;
         // Only the part that is new this turn, and only when someone asked.
         if (onPartial && len > this.#seen.length) {
           const fresh = all.startsWith(this.#seen) ? all.slice(this.#seen.length) : all;
@@ -581,21 +593,30 @@ export class AiModeBackend {
     }
 
     const before = this.#seen.length;
-    await phase("send", async () => {
-      const send = page.locator(SEND).first();
-      try {
-        // A button that is going to be clickable is clickable quickly. This
-        // waited five seconds before giving up, and measured turns spent all
-        // five of them: the click failed, Enter worked, and the turn had paid
-        // 5.1s for the attempt. Enter is not the fallback because it is worse,
-        // it is the fallback because the button is the more specific target.
-        await send.click({ timeout: 1200 });
-      } catch {
-        // Enter submits too, and works even when the button is mid-transition.
-        await box.press("Enter");
-      }
+    // Enter first, the button second — the opposite of how this started, and
+    // the page itself decides whether it worked.
+    //
+    // The button is the more specific target, so it went first and the key was
+    // the fallback. Measured, that cost: a click that works takes 260ms, a
+    // click that does not takes the whole timeout before the key runs, and it
+    // often does not. Pressing the key costs nothing.
+    //
+    // Whether it submitted is not asked of the composer — `inputValue` still
+    // showed the text right after a send that had worked, and believing it
+    // cost three seconds of clicking a button that was no longer needed. The
+    // only honest signal is the conversation growing.
+    await phase("send", () => box.press("Enter"));
+    await phase("first token", async () => {
+      await this.#waitForGrowth(before, 3000);
+      if ((await this.#conversation()).length !== before) return;
+      // Nothing happened, so the key did not submit after all.
+      await page
+        .locator(SEND)
+        .first()
+        .click({ timeout: 3000 })
+        .catch(() => undefined);
+      await this.#waitForGrowth(before, 8000);
     });
-    await phase("first token", () => this.#waitForGrowth(before));
     await phase("settle", () => this.#settle(1200, text));
     return phase("read", () => this.#read(text));
   }
