@@ -55,7 +55,8 @@ function run(
   opts: {
     args?: string[];
     replies?: string[];
-    env?: Record<string, string>;
+    /** `undefined` removes the variable rather than setting it. */
+    env?: Record<string, string | undefined>;
     /** Reuse a home from a previous run, so state carries between processes. */
     home?: string;
     keep?: boolean;
@@ -73,18 +74,22 @@ function run(
         cwd: work,
         timeout: 90_000,
         maxBuffer: 1 << 24,
-        env: {
-          ...process.env,
-          HOME: home,
-          USERPROFILE: home,
-          NO_COLOR: "1",
-          GAHOOLE_BACKEND: "stub",
-          GAHOOLE_STUB: JSON.stringify(opts.replies ?? ["ok."]),
-          GAHOOLE_USER: "smoke",
-          GAHOOLE_HOME: path.join(home, ".gahoole"),
-          MCP_CONFIG: path.join(home, "no-such-mcp.json"),
-          ...opts.env,
-        },
+        // An override of `undefined` removes the variable, which is the only
+        // way to test what happens when one is not set at all.
+        env: Object.fromEntries(
+          Object.entries({
+            ...process.env,
+            HOME: home,
+            USERPROFILE: home,
+            NO_COLOR: "1",
+            GAHOOLE_BACKEND: "stub",
+            GAHOOLE_STUB: JSON.stringify(opts.replies ?? ["ok."]),
+            GAHOOLE_USER: "smoke",
+            GAHOOLE_HOME: path.join(home, ".gahoole"),
+            MCP_CONFIG: path.join(home, "no-such-mcp.json"),
+            ...opts.env,
+          }).filter(([, v]) => v !== undefined),
+        ),
       },
       (err, stdout, stderr) => {
         if (!opts.keep) fs.rmSync(home, { recursive: true, force: true });
@@ -512,5 +517,23 @@ function run(
   assert.equal(cancelled(), false, "the next turn starts clean");
 }
 
-console.log("ok — cli: answers, commands, profiles, approval, sessions, trust, --serve, Esc");
+// --- NO_COLOR ----------------------------------------------------------------
+//
+// The banner, the trust prompt and the spinner all honoured it; the progress
+// lines the CLI writes itself did not, so `NO_COLOR=1 gahoole` still wrapped
+// every one of them in escape codes — visible the moment the output went
+// anywhere but a terminal.
+{
+  const plain = await run(["こんにちは", "/exit"], { replies: ["はい。"] });
+  assert.ok(!plain.stdout.includes("\x1b["), `no escapes with NO_COLOR:\n${plain.stdout}`);
+
+  // And with it unset there are some, so the check above is not vacuous.
+  const colored = await run(["こんにちは", "/exit"], {
+    replies: ["はい。"],
+    env: { NO_COLOR: undefined },
+  });
+  assert.ok(colored.stdout.includes("\x1b["), "and colour when it is not asked to stop");
+}
+
+console.log("ok — cli: answers, commands, profiles, approval, sessions, trust, --serve, Esc, NO_COLOR");
 process.exit(0);

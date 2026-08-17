@@ -67,8 +67,17 @@ import {
 } from "./profiles.js";
 import { MODEL } from "./agent.js";
 
-const DIM = "\x1b[2m";
-const RESET = "\x1b[0m";
+// NO_COLOR, honoured here as well as in the parts that already did.
+//
+// The banner, the trust prompt and the spinner all checked it; the progress
+// lines this file writes did not, so `NO_COLOR=1 gahoole` still printed escape
+// codes around every one of them — visible the moment the output went
+// anywhere but a terminal.
+const COLOR = !process.env.NO_COLOR;
+const DIM = COLOR ? "\x1b[2m" : "";
+const RESET = COLOR ? "\x1b[0m" : "";
+const WARN = COLOR ? "\x1b[33m" : "";
+const ERR = COLOR ? "\x1b[31m" : "";
 
 const RESOURCE_ID = process.env.GAHOOLE_USER ?? "local-user";
 
@@ -334,7 +343,7 @@ async function main(): Promise<void> {
         `Instructions for this project, from GAHOOLE.md:\n\n${instructions}`,
       );
       console.log(
-        `\x1b[2mGAHOOLE.md · ${instructions.split("\n").length} lines of project instructions\x1b[0m`,
+        `${DIM}GAHOOLE.md · ${instructions.split("\n").length} lines of project instructions${RESET}`,
       );
     }
   }
@@ -346,8 +355,8 @@ async function main(): Promise<void> {
     if (earlier.length && !startId) {
       await session.seedContext(seedFrom(earlier));
       console.log(
-        `\x1b[2mcarrying ${earlier.length} note${earlier.length === 1 ? "" : "s"} ` +
-          `from earlier sessions · /memory to see them\x1b[0m`,
+        `${DIM}carrying ${earlier.length} note${earlier.length === 1 ? "" : "s"} ` +
+          `from earlier sessions · /memory to see them${RESET}`,
       );
     }
   }
@@ -360,8 +369,8 @@ async function main(): Promise<void> {
     await session.seedContext(HandoffStore.seedText(pending));
     carriedOver = true;
     console.log(
-      `\x1b[33mcarried over from ${pending.sessionId.slice(0, 8)} ` +
-        `(${pending.reason}${pending.summary ? ", summarized" : ", transcript only"})\x1b[0m`,
+      `${WARN}carried over from ${pending.sessionId.slice(0, 8)} ` +
+        `(${pending.reason}${pending.summary ? ", summarized" : ", transcript only"})${RESET}`,
     );
   }
 
@@ -379,8 +388,8 @@ async function main(): Promise<void> {
         ? ` retry after ${Math.ceil(f.retryAfterMs / 1000)}s.`
         : "";
       console.error(
-        `\x1b[33m${f.kind} — conversation saved to the handoff.${wait}\n` +
-          `  restart, or /clear, to continue from it.\x1b[0m`,
+        `${WARN}${f.kind} — conversation saved to the handoff.${wait}\n` +
+          `  restart, or /clear, to continue from it.${RESET}`,
       );
     },
   });
@@ -534,7 +543,7 @@ async function main(): Promise<void> {
         if (left) console.log(`${stream.started ? "" : "\n"}${left}\n`);
       }
     } catch (e) {
-      console.error(`\x1b[31m${e instanceof Error ? e.message : String(e)}\x1b[0m\n`);
+      console.error(`${ERR}${e instanceof Error ? e.message : String(e)}${RESET}\n`);
     } finally {
       if (loop) loop.use(profile, toolsFor(profile, allTools));
     }
@@ -634,7 +643,7 @@ async function main(): Promise<void> {
               approval.set(next);
               console.log(
                 next === "allow"
-                  ? "  \x1b[33mallow — writes, deletes and commands run without asking\x1b[0m"
+                  ? `  ${WARN}allow — writes, deletes and commands run without asking${RESET}`
                   : `  ${next}`,
               );
               break;
@@ -742,7 +751,7 @@ async function main(): Promise<void> {
               });
               const done = result.tasks.filter((t) => t.status === "done").length;
               console.log(
-                `\x1b[2m  ${result.stopped} · ${done}/${result.tasks.length} done · ${result.steps} steps\x1b[0m\n`,
+                `${DIM}  ${result.stopped} · ${done}/${result.tasks.length} done · ${result.steps} steps${RESET}\n`,
               );
               break;
             }
@@ -810,7 +819,7 @@ async function main(): Promise<void> {
                 await session.seedContext(HandoffStore.seedText(waiting));
                 carriedOver = true;
                 console.log(
-                  `\x1b[33mcarried over from ${waiting.sessionId.slice(0, 8)}\x1b[0m`,
+                  `${WARN}carried over from ${waiting.sessionId.slice(0, 8)}${RESET}`,
                 );
               }
               break;
@@ -825,7 +834,7 @@ async function main(): Promise<void> {
               const { next, summary } = await session.compact();
               session = next;
               showStatus();
-              console.log(`\x1b[2m${summary}\x1b[0m\n`);
+              console.log(`${DIM}${summary}${RESET}\n`);
               break;
             }
 
@@ -847,7 +856,7 @@ async function main(): Promise<void> {
           }
         } catch (e) {
           console.error(
-            `\x1b[31m${e instanceof Error ? e.message : String(e)}\x1b[0m`,
+            `${ERR}${e instanceof Error ? e.message : String(e)}${RESET}`,
           );
         }
         return true;
@@ -859,7 +868,7 @@ async function main(): Promise<void> {
         const { paths, prompt } = extractAttachments(line);
         if (paths.length) {
           console.log(
-            `\x1b[2m  attaching ${paths.length} image${paths.length > 1 ? "s" : ""}\x1b[0m`,
+            `${DIM}  attaching ${paths.length} image${paths.length > 1 ? "s" : ""}${RESET}`,
           );
         }
         stream.reset();
@@ -918,10 +927,10 @@ async function main(): Promise<void> {
       } catch (e) {
         // Stopping on purpose is not a failure, and the session carries on.
         if (isInterrupted(e)) {
-          console.log(`${DIM}  stopped\x1b[0m\n`);
+          console.log(`${DIM}  stopped${RESET}\n`);
         } else {
           // StopFailure already fired; a failed turn does not end the session.
-          console.error(`\x1b[31m${e instanceof Error ? e.message : e}\x1b[0m\n`);
+          console.error(`${ERR}${e instanceof Error ? e.message : e}${RESET}\n`);
           exitCode = 1;
         }
       }
@@ -939,7 +948,7 @@ async function main(): Promise<void> {
           session: () => session,
           run: (p) => session.run(p),
         },
-        onRequest: (line) => console.log(`\x1b[2m› ${line}\x1b[0m`),
+        onRequest: (line) => console.log(`${DIM}› ${line}${RESET}`),
       });
       const bound = await listen(server, port, host);
 

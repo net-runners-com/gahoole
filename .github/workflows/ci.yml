@@ -50,3 +50,31 @@ jobs:
           key: cloakbrowser-${{ runner.os }}
       - run: npm ci
       - run: npm run smoke:dom
+
+  # What a person who installs this actually gets. The tests all run from the
+  # checkout, where every file is present whether or not `files` lists it —
+  # so a missing entry, or a bin that cannot find dist, shows up here and
+  # nowhere else. Installed into a path with a space in it on purpose.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm pack --pack-destination /tmp
+      - name: install it somewhere else
+        run: |
+          mkdir -p "/tmp/install here"
+          cd "/tmp/install here"
+          npm init -y
+          npm i /tmp/gahoole-*.tgz
+      - name: it runs, and it answers
+        run: |
+          cd "/tmp/install here"
+          ./node_modules/.bin/gahoole --version
+          printf 'hello\n' | GAHOOLE_BACKEND=stub GAHOOLE_STUB='["it works."]' \
+            NO_COLOR=1 ./node_modules/.bin/gahoole --no-banner --trust | tee out.txt
+          grep -q "it works." out.txt

@@ -5,6 +5,13 @@ import { mcpServerOf } from "../mcp.js";
 import { log, logError } from "../output.js";
 import { inProject } from "../paths.js";
 
+// NO_COLOR, like everywhere else that writes to the terminal.
+const COLOR = !process.env.NO_COLOR;
+const DIM = COLOR ? "\x1b[2m" : "";
+const RESET = COLOR ? "\x1b[0m" : "";
+const WARN = COLOR ? "\x1b[33m" : "";
+const ERR = COLOR ? "\x1b[31m" : "";
+
 const LOG = inProject("events.jsonl");
 
 /**
@@ -47,25 +54,25 @@ export function registerConsoleTrace(lifecycle: Lifecycle): void {
   lifecycle
     .on("SessionStart", (e) =>
       log(
-        `\x1b[2m● session ${e.sessionId.slice(0, 8)}${e.source ? ` (${e.source.kind} of ${e.source.from.slice(0, 8)})` : ""}\x1b[0m`,
+        `${DIM}● session ${e.sessionId.slice(0, 8)}${e.source ? ` (${e.source.kind} of ${e.source.from.slice(0, 8)})` : ""}${RESET}`,
       ),
     )
     .on("SessionEnd", (e) =>
       log(
-        `\x1b[2m○ session ${e.sessionId.slice(0, 8)} ended: ${e.reason} · ${e.turns} turns · ${(e.ms / 1000).toFixed(1)}s\x1b[0m`,
+        `${DIM}○ session ${e.sessionId.slice(0, 8)} ended: ${e.reason} · ${e.turns} turns · ${(e.ms / 1000).toFixed(1)}s${RESET}`,
       ),
     )
     .on("PreToolUse", (e) => {
       const input = JSON.stringify(e.input) ?? "";
       const shown = input.length > 120 ? `${input.slice(0, 117)}…` : input;
-      log(`\x1b[2m  ├ ${e.toolName} ${shown}\x1b[0m`);
+      log(`${DIM}  ├ ${e.toolName} ${shown}${RESET}`);
     })
     .on("PostToolUse", (e) => {
       // A denial arrives here as an ordinary output — surface it as its own
       // outcome rather than letting it read as a successful call.
       const denied = (e.output as { denied?: boolean } | undefined)?.denied;
       const status = e.error ? "failed" : denied ? "denied" : "ok";
-      const color = e.error ? "\x1b[31m" : denied ? "\x1b[33m" : "\x1b[2m";
+      const color = e.error ? ERR : denied ? WARN : DIM;
       // What the tool confirmed, when it confirmed something. A write that
       // says "ok" and a write that says "ok · 340 bytes" are different
       // statements, and the second is the one worth printing: it was read
@@ -77,15 +84,15 @@ export function registerConsoleTrace(lifecycle: Lifecycle): void {
           : out.trashed
             ? ` · in ${out.trashed}`
             : "";
-      log(`${color}  └ ${e.toolName} ${status}${proof} · ${e.ms}ms\x1b[0m`);
+      log(`${color}  └ ${e.toolName} ${status}${proof} · ${e.ms}ms${RESET}`);
     })
     .on("Stop", (e) =>
       log(
-        `\x1b[2m  turn done · ${e.toolCalls} tool calls · ${(e.ms / 1000).toFixed(1)}s\x1b[0m`,
+        `${DIM}  turn done · ${e.toolCalls} tool calls · ${(e.ms / 1000).toFixed(1)}s${RESET}`,
       ),
     )
     .on("StopFailure", (e) =>
-      logError(`\x1b[31m  turn failed: ${e.error.message}\x1b[0m`),
+      logError(`${ERR}  turn failed: ${e.error.message}${RESET}`),
     );
 }
 

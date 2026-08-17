@@ -39,7 +39,8 @@
     "smoke:ollama": "tsx src/smoke-ollama.ts",
     "smoke:plugins": "tsx src/smoke-plugins.ts",
     "smoke:exports": "tsx src/smoke-exports.ts",
-    "smoke:notify": "tsx src/smoke-notify.ts"
+    "smoke:notify": "tsx src/smoke-notify.ts",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@mastra/core": "^1.59.0",
@@ -64,5 +65,8 @@
     "bin",
     "mcp.json.example",
     "README.md"
-  ]
+  ],
+  "engines": {
+    "node": ">=20.6"
+  }
 }
