@@ -226,7 +226,21 @@ export const deleteFile = createTool({
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const dest = path.join(projectDir(), "trash", stamp, rel(target));
     await fs.mkdir(path.dirname(dest), { recursive: true });
-    await fs.rename(target, dest);
+    // Rename, or copy and unlink when that is not allowed.
+    //
+    // The trash is under ~/.gahoole and the file is in the project, which are
+    // not always on the same device: a D: checkout with a C: home on Windows,
+    // an external disk, a container mount. rename() fails with EXDEV there,
+    // and a delete that only works on one filesystem is a delete that will one
+    // day refuse for a reason nobody can act on. copyFile then unlink leaves
+    // the same two halves for the checks below to verify.
+    try {
+      await fs.rename(target, dest);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EXDEV") throw e;
+      await fs.copyFile(target, dest);
+      await fs.unlink(target);
+    }
 
     // Both halves checked. "Deleted" is worth nothing if the file is still
     // there, and "recoverable" is worth less than nothing if it is not.

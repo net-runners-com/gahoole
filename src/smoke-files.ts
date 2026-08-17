@@ -435,6 +435,62 @@ try {
   }
 }
 
+// --- a trash on another device ------------------------------------------------
+//
+// The trash is under ~/.gahoole and the file is in the project, which are not
+// always on the same filesystem: a D: checkout with a C: home on Windows found
+// this, and an external disk or a container mount is the same shape. rename()
+// answers EXDEV there.
+{
+  const { tools: t } = await import("./tools.js");
+  const del = t.delete_file.execute as unknown as (i: {
+    path: string;
+  }) => Promise<{ trashed: string; verified: boolean }>;
+
+  const doomed = path.join(SCRATCH, "cross-device.txt");
+  fs.writeFileSync(doomed, "move me");
+
+  const real = fs.promises.rename;
+  let refused = 0;
+  // Every rename, not the first: the point is that this path never uses it.
+  (fs.promises as { rename: unknown }).rename = async () => {
+    refused++;
+    const e = new Error("EXDEV: cross-device link not permitted") as NodeJS.ErrnoException;
+    e.code = "EXDEV";
+    throw e;
+  };
+  try {
+    const gone = await del({ path: at("cross-device.txt") });
+    assert.equal(gone.verified, true);
+    assert.ok(refused > 0, "rename was tried");
+    assert.equal(fs.existsSync(doomed), false, "gone from where it was");
+    // `trashed` is for a person to read, so it is written with a ~.
+    const kept = path.resolve(gone.trashed.replace(/^~(?=\/)/, os.homedir()));
+    assert.ok(fs.existsSync(kept), "and there to restore");
+    assert.equal(fs.readFileSync(kept, "utf8"), "move me");
+  } finally {
+    (fs.promises as { rename: unknown }).rename = real;
+  }
+
+  // Any other rename failure is still a failure — this is a fallback for one
+  // reason, not a blanket retry.
+  fs.writeFileSync(doomed, "again");
+  (fs.promises as { rename: unknown }).rename = async () => {
+    const e = new Error("EACCES: permission denied") as NodeJS.ErrnoException;
+    e.code = "EACCES";
+    throw e;
+  };
+  try {
+    await assert.rejects(
+      () => del({ path: at("cross-device.txt") }),
+      /EACCES/,
+    );
+  } finally {
+    (fs.promises as { rename: unknown }).rename = real;
+  }
+  fs.rmSync(doomed, { force: true });
+}
+
 console.log(
     `ok — file tools: ${Object.keys(tools).length} tools, ${MUTATING.size} gated, guard and approval enforced`,
   );
