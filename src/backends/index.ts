@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import type { Agent } from "@mastra/core/agent";
 import { AiModeBackend, AiModeRateLimitError } from "./aimode.js";
 
@@ -24,11 +25,70 @@ export interface Backend {
   close?(): Promise<void>;
 }
 
-export type BackendKind = "ai-mode" | "api" | "stub";
+export type BackendKind = "ai-mode" | "api" | "stub" | "replay";
 
 export function backendKind(): BackendKind {
   const want = process.env.GAHOOLE_BACKEND;
-  return want === "api" || want === "stub" ? want : "ai-mode";
+  return want === "api" || want === "stub" || want === "replay" ? want : "ai-mode";
+}
+
+/**
+ * A recorded session, played back.
+ *
+ * `GAHOOLE_BACKEND=replay GAHOOLE_REPLAY=run.jsonl` answers from what the real
+ * backend said, in order. Everything above it — the tool loop, the nudges, the
+ * autonomous loop, the CLI — runs for real against real answers, instantly and
+ * identically every time.
+ *
+ * The prompts are checked as they go, not because they have to match but
+ * because a divergence is the interesting part: it means the change under test
+ * altered what would have been asked, and the rest of the recording is about
+ * a conversation that no longer exists. It says so and keeps going, since a
+ * changed prompt is usually the point.
+ */
+function createReplay(): Backend {
+  const file = process.env.GAHOOLE_REPLAY ?? "";
+  let turns: { prompt: string; answer: string }[] = [];
+  try {
+    turns = fs
+      .readFileSync(file, "utf8")
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as { prompt: string; answer: string });
+  } catch {
+    turns = [];
+  }
+
+  let i = 0;
+  let warned = false;
+  const replay: Backend = {
+    name: `replay(${turns.length})`,
+    fork: async () => replay,
+    reset: () => {
+      i = 0;
+    },
+    async ask(prompt: string) {
+      const turn = turns[i];
+      if (!turn) {
+        throw new Error(
+          `the recording has ${turns.length} turns and this is number ${i + 1}`,
+        );
+      }
+      i++;
+      const gist = (s: string) => s.replace(/\s+/g, " ").trim().slice(-90);
+      if (!warned && gist(turn.prompt) !== gist(prompt)) {
+        warned = true;
+        process.stderr.write(
+          `[replay] turn ${i} was asked something else — from here the ` +
+            `recording answers a different conversation\n` +
+            `  recorded: …${gist(turn.prompt)}\n` +
+            `  now:      …${gist(prompt)}\n`,
+        );
+      }
+      return turn.answer;
+    },
+  };
+  return replay;
 }
 
 /**
@@ -82,6 +142,7 @@ export function createBackend(
   sessionIdOf: () => string,
 ): Backend {
   if (kind === "stub") return createStub();
+  if (kind === "replay") return createReplay();
   if (kind === "ai-mode") {
     return new AiModeBackend({
       headed: process.env.GAHOOLE_HEADED === "1",

@@ -56,6 +56,16 @@ function claimsWork(answer: string): boolean {
 }
 
 /** Does the request need something done, rather than answered? */
+/**
+ * What follows a message of results.
+ *
+ * The reminder goes with it, and that is not belt and braces. Continuation
+ * messages used to carry no instructions at all, and a recording showed what
+ * that costs on a backend that is a search engine: handed the contents of two
+ * files and asked to continue, it went and searched the web for "how to
+ * summarize data in excel" and came back with six links. The rules only hold
+ * where they are said.
+ */
 const CONTINUE = "Continue. Answer the original question using these results.";
 
 /** Tools that leave something behind. Reading is not doing. */
@@ -350,7 +360,7 @@ export class ToolLoop implements Backend {
               "Repeating it will not change anything. Either move on to the next " +
               "step, or say what is blocking you and stop.\n\n"
             : "") +
-          CONTINUE,
+          `${CONTINUE}\n\n${buildReminder(specs)}`,
       );
     }
 

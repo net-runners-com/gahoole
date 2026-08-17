@@ -111,6 +111,9 @@ usage
 
 environment
   ANTHROPIC_API_KEY   required
+  GAHOOLE_RECORD      append every exchange to this file
+  GAHOOLE_BACKEND     ai-mode (default), api, stub, replay
+  GAHOOLE_REPLAY      the recording to answer from
   GAHOOLE_HOME        default ~/.gahoole
   GAHOOLE_DIR         default ~/.gahoole/projects/<this project>
   GAHOOLE_DB_URL      default <that directory>/gahoole.db

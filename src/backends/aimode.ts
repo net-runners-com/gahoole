@@ -107,6 +107,27 @@ const URL_MAX = 400;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Every exchange, written down, when asked for.
+ *
+ * `GAHOOLE_RECORD=run.jsonl` appends what was sent and what came back. The
+ * replay backend then answers from the file, which turns a forty-second
+ * experiment that spends ten queries against a rate limit and gives a
+ * different answer each time into a deterministic one that costs nothing.
+ *
+ * Chasing one bug through this loop took a dozen live runs and never settled;
+ * with a recording it is a single test.
+ */
+function record(prompt: string, answer: string): void {
+  const file = process.env.GAHOOLE_RECORD;
+  if (!file) return;
+  try {
+    fs.appendFileSync(file, `${JSON.stringify({ prompt, answer })}\n`);
+  } catch {
+    // Losing a recording must not lose the turn that produced it.
+  }
+}
+
+/**
  * Where a turn's seconds go, when asked.
  *
  * `GAHOOLE_TIMING=1` prints a line per phase to stderr. A turn here is a
@@ -603,6 +624,7 @@ export class AiModeBackend {
         );
         this.#remember(prompt, answer);
         this.#retriedEmpty = false;
+        record(prompt, answer);
         return answer;
       } catch (e) {
         // A dead browser is not a refused answer. Relaunching costs one query

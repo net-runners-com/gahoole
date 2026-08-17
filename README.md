@@ -50,6 +50,26 @@ npm run dev            # or: npm link && gahoole
 `npm run smoke:offline` runs everything that needs nothing; `npm run smoke:all`
 adds the browser. CI runs both on every push.
 
+### Recording a session
+
+A live run costs forty seconds, ten queries against a rate limit, and gives a
+different answer each time — which makes it a poor instrument for finding out
+why something went wrong.
+
+```bash
+GAHOOLE_RECORD=run.jsonl gahoole            # write down every exchange
+GAHOOLE_BACKEND=replay GAHOOLE_REPLAY=run.jsonl gahoole   # answer from it
+```
+
+Everything above the backend — the tool loop, the nudges, the autonomous loop,
+the CLI — then runs for real against real answers, instantly and identically.
+A recording is also readable on its own: the bug that had survived a dozen
+live runs was three lines into the first one taken, where the answer to a
+message of file contents turned out to be six web search results.
+
+If a change alters what would have been asked, replay says so and carries on,
+since changing the prompt is usually the point.
+
 None of them need an API key.
 
 ## Where each scope lives
