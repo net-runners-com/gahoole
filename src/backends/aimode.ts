@@ -71,6 +71,25 @@ export function looksLikeCrash(e: unknown): boolean {
   return CRASHED.test(message);
 }
 
+/**
+ * What AI Mode shows when it declines the query itself.
+ *
+ * Not a rate limit — the profile is fine and the next question works — and
+ * not an error either. It is a search engine saying it has nothing for this
+ * search, which happens to bare instructions with no question in them. Left
+ * undetected it was handed back as the answer, and a loop asking for a file's
+ * contents got this three times while the file stayed empty.
+ */
+const REFUSED =
+  /この検索に対しては回答することができなかった|別の検索をお試しください|couldn't find (?:an? )?(?:answer|result)/i;
+
+export class AiModeRefusedError extends Error {
+  constructor() {
+    super("AI Mode declined the query");
+    this.name = "AiModeRefusedError";
+  }
+}
+
 /** What AI Mode shows instead of an answer once the limit is reached. */
 const BLOCKED =
   /エラーが発生したため|回答が生成されませんでした|コンテンツを生成できません|error occurred|something went wrong and the content wasn't generated/i;
@@ -456,13 +475,27 @@ export class AiModeBackend {
       const all = await this.#conversation();
       const len = all.length;
 
-      // Returning early when the text ends on a full stop was tried and
-      // reverted. A greeting is complete 1.4s after sending and settle sits
-      // until 2.6s, so there is a second to win — but an answer that opens
-      // "日本の47都道府県の県庁所在地の一覧です。" and then lists them arrives as an
-      // intro burst ending in exactly that full stop, and the rule cut the
-      // list off. Measured: 21 characters instead of the whole thing. A slow
-      // answer is better than a wrong one, so the quiet period stands.
+      // Returning *early* was tried and reverted — an answer that opens with
+      // a sentence and then lists things arrives as an intro burst ending in
+      // a full stop, and cutting there lost the list.
+      //
+      // Waiting *longer* is safe, and there are two signs an answer is not
+      // finished no matter how quiet it has gone. A fence that has been
+      // opened and not closed is mid-code-block. And a promise of something
+      // that has not arrived — "以下が全コードです" with no block under it — is a
+      // gap before the code, not the end of the answer. Measured: a request
+      // for a file's contents came back as 112 characters ending mid-word,
+      // and the file was written empty.
+      const body = all.trim();
+      const openFence = (body.match(/```/g) ?? []).length % 2 === 1;
+      // Code specifically, not any promise of something following. "次のとおり
+      // です" opens a list as often as a program, and waiting four seconds for
+      // every list would buy nothing.
+      const promised =
+        /(以下|次)[^\n]{0,24}(コード|スクリプト|プログラム)|全コードです|full code|complete code|code is below/i.test(
+          body,
+        ) && !body.includes("```");
+      const patience = openFence || promised ? Math.max(quietMs, 4000) : quietMs;
       void bursts;
 
       if (len !== last) {
@@ -479,7 +512,7 @@ export class AiModeBackend {
         }
         last = len;
         lastChange = Date.now();
-      } else if (len > 0 && Date.now() - lastChange >= quietMs) {
+      } else if (len > 0 && Date.now() - lastChange >= patience) {
         return;
       }
       await page.waitForTimeout(200);
@@ -634,6 +667,7 @@ export class AiModeBackend {
 
     if (!fresh) throw new EmptyAnswerError();
     if (BLOCKED.test(fresh)) throw new AiModeRateLimitError();
+    if (REFUSED.test(fresh)) throw new AiModeRefusedError();
     return stripChrome(dropQuestion(fresh, asked));
   }
 

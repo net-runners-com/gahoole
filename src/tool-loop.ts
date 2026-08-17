@@ -345,14 +345,29 @@ export class ToolLoop implements Backend {
         if (call.tool !== "write_file" || typeof input.content === "string") continue;
         if (bodiesAsked >= 2) continue;
         bodiesAsked++;
-        this.#queries++;
-        const sent = await this.inner.ask(
-          `Send the contents of ${String(input.path ?? "that file")} now — the ` +
-            `whole file, in one fenced code block, and nothing else. No ` +
-            `${"TOOL_CALL:"} line, no explanation, just the block.`,
-        );
-        const body = parseBody(sent);
-        if (body) input.content = body;
+        const name = String(input.path ?? "that file");
+        // Asked as a question, and asked again differently if the first form
+        // is declined.
+        //
+        // The first version was an instruction — "send the contents now,
+        // nothing else" — and this backend is a search engine: it answered
+        // "この検索に対しては回答することができなかったようです" three times while the
+        // file stayed empty. A question it can answer gets an answer.
+        const ways = [
+          `${name} の中身はどうなりますか？ ファイル全体を1つのコードブロックで書いてください。`,
+          `What should the complete contents of ${name} be? Write the whole file in a single fenced code block.`,
+        ];
+        for (const way of ways) {
+          this.#queries++;
+          const sent = await this.inner
+            .ask(way)
+            .catch(() => "");
+          const body = parseBody(sent);
+          if (body) {
+            input.content = body;
+            break;
+          }
+        }
       }
 
       // Loading a skill turns the turn into a procedure: read the reference,

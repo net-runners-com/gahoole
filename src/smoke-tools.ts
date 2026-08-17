@@ -484,8 +484,9 @@ const tools = {
 
   assert.match(
     stub.prompts[1] ?? "",
-    /contents of a\.py/,
-    `the contents are asked for by name: ${stub.prompts[1]?.slice(0, 80)}`,
+    /a\.py の中身/,
+    `the contents are asked for by name, as a question — an instruction was ` +
+      `declined by the backend three times: ${stub.prompts[1]?.slice(0, 80)}`,
   );
   const results = stub.prompts.find((p) => p.includes("TOOL_RESULT:")) ?? "";
   assert.match(results, /write_file/, "and the write then runs");

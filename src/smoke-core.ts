@@ -94,6 +94,19 @@ try {
     );
   }
 
+  // A declined query is its own thing too: the profile is fine and the next
+  // question works, so it is neither a rate limit nor a crash. Left
+  // undetected it was handed back as the answer — a loop asking for a file's
+  // contents got "この検索に対しては回答することができなかったようです" three times while
+  // the file stayed empty.
+  {
+    const { AiModeRefusedError } = await import("./backends/aimode.js");
+    const refused = new AiModeRefusedError();
+    assert.equal(refused.name, "AiModeRefusedError");
+    assert.ok(!looksLikeCrash(refused));
+    assert.ok(!(refused instanceof AiModeRateLimitError));
+  }
+
   // An empty page is its own thing: not a refusal, not a dead browser, and
   // measured at roughly one query in forty when hammering — the same profile
   // answers normally straight afterwards, so it is worth asking again for.

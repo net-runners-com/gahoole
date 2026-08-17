@@ -729,5 +729,38 @@ assert.equal(parsePlan(Array.from({ length: 40 }, (_, i) => `${i}. step number $
   assert.equal(dropQuestionForTest("はい。", "2+2"), "はい。");
 }
 
+// ===========================================================================
+// an answer that is visibly unfinished
+// ===========================================================================
+//
+// settle decides an answer has stopped when it has been quiet for a while,
+// and a gap before a code block looks exactly like the end. Measured: a
+// request for a file's contents came back as 112 characters ending mid-word,
+// and the file was written empty. These are the two signs the reader can see
+// without knowing what the answer was going to be.
+{
+  const openFence = (t: string) => (t.match(/```/g) ?? []).length % 2 === 1;
+  assert.equal(openFence("ここから\n```python\nprint(1)"), true, "opened, not closed");
+  assert.equal(openFence("```python\nprint(1)\n```"), false, "closed");
+  assert.equal(openFence("ふつうの文章。"), false, "no fence at all");
+
+  const promised = (t: string) =>
+    /(以下|次)[^\n]{0,24}(コード|スクリプト|プログラム)|全コードです|full code|complete code|code is below/i.test(
+      t,
+    ) && !t.includes("```");
+  assert.equal(promised("以下が create_shift.py の全コードです。"), true);
+  assert.equal(promised("以下がシフト表を作るスクリプトです。"), true);
+  // Code specifically. "次のとおりです" opens a list as often as a program, and
+  // waiting four seconds for every list would buy nothing.
+  assert.equal(promised("次のとおりです。"), false);
+  assert.equal(promised("日本の47都道府県の一覧です。"), false);
+  assert.equal(promised("Here is the full code:"), true);
+  assert.equal(
+    promised("以下がコードです。\n```py\nprint(1)\n```"),
+    false,
+    "and once it has arrived, the promise is kept",
+  );
+}
+
 console.log("ok — protocol: calls, bodies, budgets, plans, verdicts");
 process.exit(0);

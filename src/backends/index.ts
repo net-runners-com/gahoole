@@ -164,4 +164,4 @@ export function createBackend(
 }
 
 export { AiModeBackend } from "./aimode.js";
-export { AiModeRateLimitError } from "./aimode.js";
+export { AiModeRateLimitError, AiModeRefusedError } from "./aimode.js";
