@@ -2,6 +2,7 @@ import type { Backend } from "./backends/index.js";
 import type { Lifecycle } from "./lifecycle.js";
 import { createToolHooks } from "./agent.js";
 import { log } from "./output.js";
+import { stopHere } from "./interrupt.js";
 import type { Profile } from "./profiles.js";
 import { COMPOSER_MAX } from "./backends/aimode.js";
 import {
@@ -245,6 +246,9 @@ export class ToolLoop implements Backend {
     // rather than a question — see the use_skill case below.
     let rounds = this.#rounds;
     for (let i = 0; i < rounds; i++) {
+      // Between rounds, where nothing is half-done: a tool that has started
+      // runs to its end, and the next one does not start.
+      stopHere();
       const calls = parseCalls(answer);
 
       if (calls.length === 0) {
@@ -411,6 +415,7 @@ export class ToolLoop implements Backend {
         outcome: { output?: unknown; error?: unknown };
       }[] = [];
       for (const call of calls) {
+        stopHere();
         outcomes.push({
           tool: call.tool,
           outcome: await this.#run(call.tool, call.input),

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { launchPersistentContext } from "cloakbrowser";
 import { readConversation } from "./extract.js";
+import { isInterrupted, stopHere } from "../interrupt.js";
 import { inProject } from "../paths.js";
 
 /**
@@ -481,6 +482,7 @@ export class AiModeBackend {
     let lastChange = Date.now();
     let bursts = 0;
     while (Date.now() < deadline) {
+      stopHere();
       const all = await this.#conversation();
       const len = all.length;
 
@@ -533,6 +535,7 @@ export class AiModeBackend {
     const page = await this.#ensure();
     const deadline = Date.now() + capMs;
     while (Date.now() < deadline) {
+      stopHere();
       if ((await this.#conversation()).length !== from) return;
       await page.waitForTimeout(150);
     }
@@ -558,6 +561,7 @@ export class AiModeBackend {
   }
 
   async #askOnce(prompt: string, attachments: string[] = []): Promise<string> {
+    stopHere();
     const page = await this.#ensure();
 
     // A search URL is not a general input channel: an attachment cannot ride
@@ -609,6 +613,11 @@ export class AiModeBackend {
 
   /** Type into the composer, send, and read the answer back. */
   async #send(prompt: string): Promise<string> {
+    // Between the steps of sending, too. The polls check every 150-200ms, but
+    // typing and submitting are each a few hundred milliseconds during which
+    // nothing was looking — measured, a stop took 2.7s to land instead of the
+    // fraction of a second the polling alone implies.
+    stopHere();
     const page = await this.#ensure();
     const text = prompt.slice(0, COMPOSER_MAX);
     const box = page.locator(COMPOSER).last();
@@ -647,6 +656,7 @@ export class AiModeBackend {
     // showed the text right after a send that had worked, and believing it
     // cost three seconds of clicking a button that was no longer needed. The
     // only honest signal is the conversation growing.
+    stopHere();
     await phase("send", () => box.press("Enter"));
     await phase("first token", async () => {
       await this.#waitForGrowth(before, 3000);

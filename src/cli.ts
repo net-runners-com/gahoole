@@ -28,6 +28,7 @@ import { Spinner } from "./spinner.js";
 import { bindLineOwner } from "./output.js";
 import { LineStream, remainder } from "./stream.js";
 import { createServer, listen } from "./serve.js";
+import { beginTurn, cancelTurn, isInterrupted } from "./interrupt.js";
 import { extractAttachments } from "./attachments.js";
 import { createSpawnTool, SPAWN_TOOL } from "./subagent.js";
 import { runAutonomously } from "./autonomous.js";
@@ -94,7 +95,7 @@ const HELP = `
     /compact           carry a summary forward
     /fork              branch, keeping this session intact
 
-  /help  /exit
+  /help  /exit          Esc stops a turn that is running
 `;
 
 const USAGE = `gahoole — a local agent with a Claude Code-shaped lifecycle
@@ -452,16 +453,53 @@ async function main(): Promise<void> {
     });
   }
 
+  /**
+   * Esc, while a turn is running.
+   *
+   * readline owns stdin at the prompt, and it is idle while a question is in
+   * flight — so the key is watched only for the length of a turn, and raw mode
+   * is handed straight back afterwards. Approval asks through readline
+   * mid-turn, so the watch stands aside for that too, which is what the
+   * pause/resume below already do for the spinner.
+   */
+  let watching = false;
+  const onKey = (buf: Buffer): void => {
+    if (buf.toString() !== "\x1b") return;
+    cancelTurn();
+    spinner.label("stopping");
+  };
+  const watchEsc = (on: boolean): void => {
+    if (!interactive || !stdin.isTTY || on === watching) return;
+    watching = on;
+    if (on) {
+      if (typeof stdin.setRawMode === "function") stdin.setRawMode(true);
+      stdin.on("data", onKey);
+    } else {
+      stdin.off("data", onKey);
+      if (typeof stdin.setRawMode === "function") stdin.setRawMode(false);
+    }
+  };
+
   lifecycle
-    .on("UserPromptSubmit", () => spinner.start("thinking"))
+    .on("UserPromptSubmit", () => {
+      beginTurn();
+      watchEsc(true);
+      spinner.start("thinking");
+    })
     .on("PreToolUse", (e) => {
       // The next reply restarts the answer text, so the stream restarts too.
       stream.next();
       spinner.label(`running ${e.toolName}`);
     })
     .on("PostToolUse", () => spinner.label("thinking"))
-    .on("Stop", () => spinner.stop())
-    .on("StopFailure", () => spinner.stop());
+    .on("Stop", () => {
+      watchEsc(false);
+      spinner.stop();
+    })
+    .on("StopFailure", () => {
+      watchEsc(false);
+      spinner.stop();
+    });
 
   /**
    * Run a skill: its instructions become the question.
@@ -562,8 +600,14 @@ async function main(): Promise<void> {
     rl ? rl.question.bind(rl) : async () => "n",
     {
       mode: startMode,
-      pause: () => spinner.stop(),
-      resume: () => spinner.start("thinking"),
+      pause: () => {
+        watchEsc(false);
+        spinner.stop();
+      },
+      resume: () => {
+        spinner.start("thinking");
+        watchEsc(true);
+      },
     },
   );
   if (interactive) {
@@ -862,9 +906,14 @@ async function main(): Promise<void> {
           await runSkill(skill, args, { autonomous: true });
         }
       } catch (e) {
-        // StopFailure already fired; a failed turn does not end the session.
-        console.error(`\x1b[31m${e instanceof Error ? e.message : e}\x1b[0m\n`);
-        exitCode = 1;
+        // Stopping on purpose is not a failure, and the session carries on.
+        if (isInterrupted(e)) {
+          console.log(`${DIM}  stopped\x1b[0m\n`);
+        } else {
+          // StopFailure already fired; a failed turn does not end the session.
+          console.error(`\x1b[31m${e instanceof Error ? e.message : e}\x1b[0m\n`);
+          exitCode = 1;
+        }
       }
       return true;
     }

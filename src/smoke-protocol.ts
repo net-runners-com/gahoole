@@ -773,5 +773,32 @@ assert.equal(parsePlan(Array.from({ length: 40 }, (_, i) => `${i}. step number $
   );
 }
 
+// ===========================================================================
+// stopping a turn
+// ===========================================================================
+{
+  const { beginTurn, cancelTurn, cancelled, stopHere, isInterrupted, Interrupted } =
+    await import("./interrupt.js");
+
+  beginTurn();
+  assert.equal(cancelled(), false);
+  stopHere();
+
+  cancelTurn();
+  assert.equal(cancelled(), true);
+  assert.throws(() => stopHere(), Interrupted);
+
+  // A new turn starts uncancelled: a stop cannot leak into the next question.
+  beginTurn();
+  assert.equal(cancelled(), false);
+  stopHere();
+
+  // Told apart from a failure, because stopping on purpose is not one and the
+  // session carries on afterwards.
+  assert.equal(isInterrupted(new Interrupted()), true);
+  assert.equal(isInterrupted(new Error("AI Mode returned nothing")), false);
+  assert.equal(isInterrupted("stopped"), false);
+}
+
 console.log("ok — protocol: calls, bodies, budgets, plans, verdicts");
 process.exit(0);
