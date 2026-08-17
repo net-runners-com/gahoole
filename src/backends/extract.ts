@@ -13,10 +13,18 @@
  * when the text is read back. `npm run smoke:dom` loads a page shaped like
  * both and checks what comes out.
  */
-export function readConversation(sel: string): string {
+export function readConversation(sel: string | string[]): string {
 
       const d = (globalThis as unknown as { document: any }).document;
-      const roots = d.querySelectorAll(sel);
+      // A list of candidates, first match wins: the page's own markup is not
+      // a promise, and a rename should cost a fallback rather than the
+      // program. Which one matched is reported by the canary.
+      const tried: string[] = typeof sel === "string" ? [sel] : sel;
+      let roots: any = [];
+      for (const candidate of tried) {
+        roots = d.querySelectorAll(candidate);
+        if (roots.length) break;
+      }
       // No container, no conversation.
       //
       // This used to fall back to reading the whole body, on the theory that

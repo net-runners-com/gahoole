@@ -96,7 +96,18 @@ const BLOCKED =
   /エラーが発生したため|回答が生成されませんでした|コンテンツを生成できません|error occurred|something went wrong and the content wasn't generated/i;
 
 /** The composer is one of two textareas; the other is a 0×0 feedback field. */
-const COMPOSER = "textarea:visible";
+/**
+ * Everything here rests on selectors nobody promised us, so each is a list
+ * rather than a string: the first that matches is used, and the rest are what
+ * the page looked like before, or what it looks like in another language.
+ *
+ * A list does not make the dependence go away — if Google rebuilds the page,
+ * none of them will match. What it buys is that a rename, a translated label
+ * or a wrapper element is survivable rather than fatal, and that `npm run
+ * canary` can say *which* one matched, so a fallback quietly carrying the
+ * program is visible instead of silent.
+ */
+export const COMPOSER = ["textarea:visible", '[contenteditable="true"]:visible'];
 
 /**
  * The composer carries maxlength="8192". Anything longer is silently cut off
@@ -112,15 +123,30 @@ const COMPOSER = "textarea:visible";
  * working around an imaginary limit.
  */
 export const COMPOSER_MAX = 8000;
-const SEND = 'button[aria-label="送信"], button[aria-label="Send"]';
+export const SEND = [
+  'button[aria-label="送信"]',
+  'button[aria-label="Send"]',
+  'button[aria-label*="送信"]',
+  'button[aria-label*="Send"]',
+  'button[type="submit"]:visible',
+];
 
-const CONVERSATION = '[data-subtree="aimc"] [data-container-id="main-col"]';
+export const CONVERSATION = [
+  '[data-subtree="aimc"] [data-container-id="main-col"]',
+  '[data-subtree="aimc"]',
+  '[data-subtree="aimfl"]',
+];
 
 /**
  * The file input only exists after the "add files and tools" button is
  * clicked, and two appear: one restricted to images, one that takes anything.
  */
-const ADD_FILES = 'button[aria-label="ファイルとツールを追加"], button[aria-label="Add files and tools"]';
+export const ADD_FILES = [
+  'button[aria-label="ファイルとツールを追加"]',
+  'button[aria-label="Add files and tools"]',
+  'button[aria-label*="ファイル"]',
+  'button[aria-label*="files"]',
+];
 const IMAGE_INPUT = 'input[type=file][accept*="image/"]';
 
 /** AI Mode with no query: the composer, ready for an attachment. */
@@ -134,6 +160,36 @@ const LANDING = "https://www.google.com/search?udm=50&aep=1&source=hp";
 const URL_MAX = 400;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The first of a list of selectors that matches something on the page.
+ *
+ * Which one it was is remembered, so the canary can report a page being held
+ * up by a fallback — the interesting state is not "it works" but "it works
+ * because the second choice matched".
+ */
+const matched = new Map<string, string>();
+
+export const whichMatched = (): Record<string, string> =>
+  Object.fromEntries(matched);
+
+async function firstMatch(
+  page: any,
+  name: string,
+  candidates: string[],
+): Promise<any> {
+  for (const selector of candidates) {
+    const locator = page.locator(selector);
+    if ((await locator.count().catch(() => 0)) > 0) {
+      matched.set(name, selector);
+      return locator;
+    }
+  }
+  matched.set(name, `none of ${candidates.length}`);
+  // Return the first anyway: the caller's own timeout produces a better error
+  // than a null would, and names the selector it was waiting for.
+  return page.locator(candidates[0]!);
+}
 
 /**
  * Every exchange, written down, when asked for.
@@ -552,7 +608,7 @@ export class AiModeBackend {
    */
   async #attach(paths: string[]): Promise<void> {
     const page = await this.#ensure();
-    await page.locator(ADD_FILES).first().click();
+    await (await firstMatch(page, "add files", ADD_FILES)).first().click();
     await page.waitForTimeout(400);
     const input = page.locator(IMAGE_INPUT).first();
     await input.setInputFiles(paths);
@@ -581,8 +637,7 @@ export class AiModeBackend {
         // first question goes through here. Measured at 3260ms for the
         // navigation and the sleep together; the composer is usually there
         // well before the sleep ended.
-        await page
-          .locator(COMPOSER)
+        await (await firstMatch(page, "composer", COMPOSER))
           .last()
           .waitFor({ state: "visible", timeout: 8000 })
           .catch(() => {});
@@ -620,7 +675,7 @@ export class AiModeBackend {
     stopHere();
     const page = await this.#ensure();
     const text = prompt.slice(0, COMPOSER_MAX);
-    const box = page.locator(COMPOSER).last();
+    const box = (await firstMatch(page, "composer", COMPOSER)).last();
     if (timing()) {
       process.stderr.write(`  [timing] prompt ${text.length} chars\n`);
     }
@@ -662,8 +717,7 @@ export class AiModeBackend {
       await this.#waitForGrowth(before, 3000);
       if ((await this.#conversation()).length !== before) return;
       // Nothing happened, so the key did not submit after all.
-      await page
-        .locator(SEND)
+      await (await firstMatch(page, "send", SEND))
         .first()
         .click({ timeout: 3000 })
         .catch(() => undefined);
@@ -788,6 +842,31 @@ export class AiModeBackend {
     this.#history = [];
     // A new conversation gets its own relaunch, since the last one is over.
     this.#relaunched = false;
+  }
+
+  /**
+   * Which selector each list resolves to right now, without using any of them.
+   *
+   * The send button is only reached when Enter fails, so a session can run for
+   * weeks without touching it and would not notice it had gone. Looking is
+   * free — nothing is clicked and no query is spent — and the canary reports
+   * what it found.
+   */
+  async checkSelectors(): Promise<Record<string, string>> {
+    const page = await this.#ensure();
+    for (const [name, list] of [
+      ["composer", COMPOSER],
+      ["send", SEND],
+      ["add files", ADD_FILES],
+    ] as const) {
+      await firstMatch(page, name, list as string[]);
+    }
+    const containers = (await page
+      .locator(CONVERSATION.join(", "))
+      .count()
+      .catch(() => 0)) as number;
+    matched.set("conversation", containers > 0 ? CONVERSATION[0]! : "none of 3");
+    return whichMatched();
   }
 
   async close(): Promise<void> {

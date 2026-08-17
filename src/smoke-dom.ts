@@ -20,6 +20,13 @@ import { readConversation } from "./backends/extract.js";
 
 const CONTAINER = '[data-subtree="aimc"]';
 
+/** The real list, to check the fallbacks are wired and not just declared. */
+const CANDIDATES = [
+  '[data-subtree="aimc"] [data-container-id="main-col"]',
+  '[data-subtree="aimc"]',
+  '[data-subtree="aimfl"]',
+];
+
 const page1 = `
 <div data-subtree="aimc">
   <p>手順は次のとおりです。</p>
@@ -168,6 +175,33 @@ try {
   assert.match(deep, /^1\. 外側のひとつめ/m);
   assert.match(deep, /^2\. 外側のふたつめ$/m, "the inner list does not shift the outer one");
   assert.match(deep, /- 内側のもの/, "and the inner one is still marked");
+
+  // --- the fallbacks are real ------------------------------------------------
+  //
+  // Everything rests on selectors nobody promised us, so each is a list and
+  // the first match wins. A rename should cost a fallback rather than the
+  // program.
+  {
+    const readWith = async (html: string, sel: string | string[]) => {
+      await page.evaluate((h: string) => {
+        (globalThis as unknown as { document: any }).document.body.innerHTML = h;
+      }, html);
+      return (await page.evaluate(readConversation, sel)) as string;
+    };
+
+    // The first candidate is the narrow one; when the inner container is gone
+    // the second still finds the answer.
+    const noInner = '<div data-subtree="aimc"><p>答えです。</p></div>';
+    assert.equal(await readWith(noInner, CANDIDATES[0]!), "", "the narrow one misses");
+    assert.equal(await readWith(noInner, CANDIDATES), "答えです。", "the list does not");
+
+    // And when only the last one is on the page.
+    const onlyLast = '<div data-subtree="aimfl"><p>最後の候補。</p></div>';
+    assert.equal(await readWith(onlyLast, CANDIDATES), "最後の候補。");
+
+    // Nothing matching anything is still nothing, not the whole document.
+    assert.equal(await readWith("<div><p>関係ない</p></div>", CANDIDATES), "");
+  }
 
   // --- reading twice gives the same answer ------------------------------------
   const again = await read(page1);
