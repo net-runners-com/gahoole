@@ -171,6 +171,28 @@ for (const decorated of [
   );
 }
 
+// Prose glued to the end of the JSON, with no line break between them.
+//
+// A line-anchored pattern needs the call alone on its line, and it is not
+// always: measured, `TOOL_CALL: {…"depth":2}}list_files を実行し、…` came back
+// with the prose run straight on, the call was invisible, and the turn
+// announced what it was about to do and did nothing.
+{
+  const [c] = parseCalls(
+    'TOOL_CALL: {"tool":"list_files","input":{"dir":".","depth":2}}list_files を実行します。',
+  );
+  assert.equal(c?.tool, "list_files");
+  assert.deepEqual(c?.input, { dir: ".", depth: 2 });
+}
+
+// Counting braces rather than matching to the end of the line means prose
+// containing a brace does not swallow the rest.
+{
+  const [c] = parseCalls('TOOL_CALL: {"tool":"a","input":{"x":"}"}} その後の文 }');
+  assert.equal(c?.tool, "a");
+  assert.deepEqual(c?.input, { x: "}" });
+}
+
 // Prose that merely mentions the marker is not a call.
 assert.deepEqual(parseCalls("I could use TOOL_CALL: to read the file."), []);
 assert.deepEqual(parseCalls("no markers here at all"), []);
@@ -795,6 +817,25 @@ assert.equal(parsePlan(Array.from({ length: 40 }, (_, i) => `${i}. step number $
   assert.equal(openFence("ここから\n```python\nprint(1)"), true, "opened, not closed");
   assert.equal(openFence("```python\nprint(1)\n```"), false, "closed");
   assert.equal(openFence("ふつうの文章。"), false, "no fence at all");
+
+  // A tool call whose JSON never closes is half-finished too. Measured: a
+  // use_skill call arrived as 121 characters ending at
+  // `"out_path":"sales_summary.xlsx` — unparseable, so the call vanished and
+  // the turn ended having chosen a skill and not run it.
+  const openCall = (t: string) => {
+    const at = t.lastIndexOf("TOOL_CALL:");
+    if (at === -1) return false;
+    const tail = t.slice(at);
+    return (tail.match(/\{/g) ?? []).length > (tail.match(/\}/g) ?? []).length;
+  };
+  assert.equal(openCall('TOOL_CALL: {"tool":"use_skill","input":{"args":{"db":"a.csv'), true);
+  assert.equal(openCall('TOOL_CALL: {"tool":"read_file","input":{"path":"a"}}'), false);
+  assert.equal(openCall("ふつうの答え。"), false);
+  assert.equal(
+    openCall('TOOL_CALL: {"tool":"a","input":{}}\nTOOL_CALL: {"tool":"b","input":{'),
+    true,
+    "the last one is the one still arriving",
+  );
 
   const promised = (t: string) =>
     /(以下|次)[^\n]{0,24}(コード|スクリプト|プログラム)|全コードです|full code|complete code|code is below/i.test(

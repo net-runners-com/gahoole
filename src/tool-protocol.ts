@@ -272,57 +272,100 @@ export function looksLikeSearch(text: string): boolean {
   );
 }
 
-export function parseCalls(text: string): ParsedCall[] {
-  const found = [...text.matchAll(CALL_RE)];
-  // The tool named before the JSON rather than inside it. Read as a call with
-  // that name and that input, in the position it was written.
-  for (const m of text.matchAll(NAMED_CALL_RE)) {
-    if (found.some((f) => f.index === m.index)) continue;
-    try {
-      const input = JSON.parse(m[2] ?? "{}") as Record<string, unknown>;
-      // `{"tool":…}` written after the name is the documented shape with a
-      // label in front; the JSON wins.
-      const json = JSON.stringify(
-        typeof input.tool === "string" ? input : { tool: m[1], input },
-      );
-      found.push(
-        Object.assign([m[0], json] as unknown as RegExpMatchArray, {
-          index: m.index,
-          input: m.input,
-        }),
-      );
-    } catch {
-      // Reported by parseMalformed like any other unreadable line.
+/**
+ * The JSON after a marker, found by counting braces rather than by trusting
+ * the line to end where it should.
+ *
+ * A line-anchored pattern needs the call to be alone on its line, and it is
+ * not always: measured, a reply arrived as
+ * `TOOL_CALL: {…"depth":2}}list_files を実行し、…` with the prose glued straight
+ * on, and the call was invisible — nought tool calls, and a turn that
+ * announced what it was about to do and did nothing.
+ *
+ * Counting handles that and the case a looser pattern would break on, prose
+ * that contains a brace, because strings are skipped rather than scanned.
+ */
+function scanJson(text: string, from: number): { json: string; end: number } | undefined {
+  const open = text.indexOf("{", from);
+  if (open === -1) return undefined;
+  // Nothing but formatting, or a tool name, may sit between the marker and
+  // the brace — otherwise a marker mentioned in prose would pick up whatever
+  // JSON came later in the text.
+  const between = text
+    .slice(from, open)
+    .trim()
+    .replace(/^[a-z_][a-z0-9_]*/i, "");
+  if (/[^\s*_`:]/.test(between)) return undefined;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
     }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return { json: text.slice(open, i + 1), end: i + 1 };
+    } else if (ch === "\n" && depth === 0) break;
   }
-  found.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+  return undefined;
+}
+
+export function parseCalls(text: string): ParsedCall[] {
+  // Found by counting braces, not by matching a line.
+  //
+  // The line patterns needed the call to sit alone on its line and to end
+  // where the JSON did. Neither holds: a reply arrived with the prose glued
+  // straight onto the closing brace, and another wrote the tool name outside
+  // the JSON. The greedy line pattern also had the opposite failure — it ran
+  // to the last brace on the line, so prose containing one produced invalid
+  // JSON and swallowed the real call with it.
+  //
+  // Counting handles all three, and strings are skipped rather than scanned,
+  // so a brace inside a value is a brace and not a boundary.
   const fences = [...text.matchAll(FENCE_G)].map((m) => ({
     at: m.index ?? 0,
     body: (m[1] ?? "").replace(/\n$/, ""),
   }));
 
-  const calls: ParsedCall[] = [];
-  for (let i = 0; i < found.length; i++) {
-    const m = found[i]!;
-    const json = m[1];
-    if (!json) continue;
+  const raw: { at: number; tool: string; input: Record<string, unknown> }[] = [];
+  for (let at = text.indexOf(CALL_PREFIX); at !== -1; at = text.indexOf(CALL_PREFIX, at + 1)) {
+    const after = at + CALL_PREFIX.length;
+    const scanned = scanJson(text, after);
+    if (!scanned) continue;
+    // `TOOL_CALL: run_command {…}` — the name written outside the JSON.
+    const named = text.slice(after, scanned.end).match(/^[ \t]*([a-z_][a-z0-9_]*)[ \t]*\{/i);
     try {
-      const parsed = JSON.parse(json) as { tool?: unknown; input?: unknown };
-      if (typeof parsed.tool !== "string") continue;
-      const input = (parsed.input ?? {}) as Record<string, unknown>;
-
-      const from = m.index ?? 0;
-      const until = found[i + 1]?.index ?? Number.POSITIVE_INFINITY;
-      const body =
-        fences.find((f) => f.at > from && f.at < until)?.body ??
-        (found.length === 1 ? parseBody(text) : undefined);
-
-      // The block supplies the field the model was told to leave out.
-      if (body !== undefined && input.content === undefined) input.content = body;
-      calls.push({ tool: parsed.tool, input });
+      const parsed = JSON.parse(scanned.json) as { tool?: unknown; input?: unknown };
+      const tool = typeof parsed.tool === "string" ? parsed.tool : named?.[1];
+      if (!tool) continue;
+      const input = (
+        typeof parsed.tool === "string" ? (parsed.input ?? {}) : parsed
+      ) as Record<string, unknown>;
+      raw.push({ at, tool, input });
     } catch {
       // Reported by parseMalformed rather than swallowed here.
     }
+  }
+
+  const calls: ParsedCall[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const { at, tool, input } = raw[i]!;
+    const until = raw[i + 1]?.at ?? Number.POSITIVE_INFINITY;
+    // A fenced block belongs to the call above it, up to the next one. With a
+    // single call a block written before the marker still counts, since models
+    // put the code first about as often as last.
+    const body =
+      fences.find((f) => f.at > at && f.at < until)?.body ??
+      (raw.length === 1 ? parseBody(text) : undefined);
+    if (body !== undefined && input.content === undefined) input.content = body;
+    calls.push({ tool, input });
   }
   return calls;
 }

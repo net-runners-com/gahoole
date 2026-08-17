@@ -555,6 +555,19 @@ export class AiModeBackend {
       // and the file was written empty.
       const body = all.trim();
       const openFence = (body.match(/```/g) ?? []).length % 2 === 1;
+      // A tool call whose JSON never closes is the same kind of half-finished.
+      // Measured: a use_skill call arrived as 121 characters ending at
+      // `"out_path":"sales_summary.xlsx` — unparseable, so the call vanished
+      // and the turn ended having chosen a skill and not run it.
+      const lastCall = body.lastIndexOf("TOOL_CALL:");
+      const openCall =
+        lastCall !== -1 &&
+        (() => {
+          const tail = body.slice(lastCall);
+          const open = (tail.match(/\{/g) ?? []).length;
+          const close = (tail.match(/\}/g) ?? []).length;
+          return open > close;
+        })();
       // Code specifically, not any promise of something following. "次のとおり
       // です" opens a list as often as a program, and waiting four seconds for
       // every list would buy nothing.
@@ -562,7 +575,8 @@ export class AiModeBackend {
         /(以下|次)[^\n]{0,24}(コード|スクリプト|プログラム)|全コードです|full code|complete code|code is below/i.test(
           body,
         ) && !body.includes("```");
-      const patience = openFence || promised ? Math.max(quietMs, 4000) : quietMs;
+      const patience =
+        openFence || promised || openCall ? Math.max(quietMs, 4000) : quietMs;
       void bursts;
 
       if (len !== last) {

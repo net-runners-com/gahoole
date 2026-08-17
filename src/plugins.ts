@@ -236,20 +236,25 @@ export function createSkillTool(
   const skills = allSkills(plugins);
   if (skills.length === 0) return undefined;
 
-  // Short on purpose.
+  // What each skill is for, in the sentence the preamble keeps.
   //
-  // It was three hundred characters of skill descriptions, on the theory that
-  // the model needed to know what each one was for. It did not help — what
-  // made it reach for a skill was the line in the reminder — and it did harm:
-  // with the long description in the tool list, turns came back with tool
-  // calls and no words at all, and the same question with no plugins loaded
-  // answered normally. The preamble has a budget nobody wrote down, and this
-  // was spending it.
-  const names = skills.map((s) => s.name).join(", ");
+  // This was cut back to bare names once, because with the long form in the
+  // tool list turns came back with tool calls and no words at all. That was
+  // read as a preamble budget being spent — but the same emptiness had four
+  // other causes that have since been found and fixed (a declined query with
+  // no retry, an answer that was a web search, a settle that gave up during
+  // the pause before a code block, a body request phrased as an instruction).
+  // So the descriptions are back and the claim is being measured again rather
+  // than inherited.
+  const gist = (s: Skill): string => {
+    const first = (s.description.split(/[。.]\s|。/)[0] ?? "").trim();
+    return first.length > 60 ? `${first.slice(0, 60)}…` : first;
+  };
+  const listed = skills.map((s) => `${s.name}（${gist(s)}）`).join("、");
 
   return createTool({
     id: "use_skill",
-    description: `Load and follow an installed skill: ${names}.`,
+    description: `Load and follow an installed skill — ${listed}.`,
     inputSchema: z.object({
       name: z.string().describe("Which skill"),
       args: z.string().optional().describe("What the skill should work on"),
