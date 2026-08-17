@@ -18,7 +18,14 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(HERE, "cli.ts");
-const TSX = path.join(HERE, "..", "node_modules", ".bin", "tsx");
+// On Windows the bin is a .cmd shim, and execFile cannot run a shell script.
+const TSX = path.join(
+  HERE,
+  "..",
+  "node_modules",
+  ".bin",
+  process.platform === "win32" ? "tsx.cmd" : "tsx",
+);
 
 interface Run {
   stdout: string;
