@@ -90,9 +90,38 @@ try {
   const { parsePlan } = await import("./plan.js");
   assert.equal(parsePlan(t).length, 5, "and the plan parser sees every item");
 
-  // --- code survives ----------------------------------------------------------
+  // --- code survives, where it was -------------------------------------------
   assert.match(t, /#include <iostream>/, "angle brackets are not eaten as markup");
   assert.match(t, /```[\s\S]*#include <iostream>[\s\S]*```/, "and arrive fenced");
+
+  // Position is what says which tool call a block belongs to. Blocks used to
+  // be appended after everything else, and a reply that wrote a file and then
+  // ran it had the file's contents attached to the run — the file was created
+  // with nothing in it.
+  {
+    const between = `
+      <div data-subtree="aimc">
+        <p>TOOL_CALL: {"tool":"write_file","input":{"path":"a.py"}}</p>
+        <pre><code>print("hello")</code></pre>
+        <p>TOOL_CALL: {"tool":"run_command","input":{"command":"python3"}}</p>
+      </div>`;
+    const text = await read(between);
+    const code = text.indexOf("print(");
+    const write = text.indexOf("write_file");
+    const run = text.indexOf("run_command");
+    assert.ok(write < code && code < run, `the block stays between them:\n${text}`);
+
+    // ...which is the whole point, so check the parser agrees.
+    const { parseCalls } = await import("./tool-protocol.js");
+    const calls = parseCalls(text);
+    assert.equal(calls.length, 2, `two calls parsed from:\n${JSON.stringify(text)}`);
+    assert.equal(
+      (calls[0]!.input as { content?: string }).content,
+      'print("hello")',
+      `the code belongs to the write, not the run:\n${JSON.stringify(text)}`,
+    );
+    assert.equal((calls[1]!.input as { content?: string }).content, undefined);
+  }
 
   // --- noise does not ---------------------------------------------------------
   for (const gone of ["出典リンク", "コピー", "フィードバック"]) {

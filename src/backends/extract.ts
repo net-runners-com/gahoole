@@ -64,28 +64,42 @@ export function readConversation(sel: string): string {
           }
         });
 
+        // Code blocks, put where they belong rather than at the end.
+        //
+        // `innerText` does not reliably include a rendered <pre>, so the code
+        // used to be appended after everything else. That loses its position,
+        // and position is what says which tool call a block belongs to: a
+        // reply that wrote a file and then ran it had the file's contents
+        // attached to the run instead, and the file was written with nothing
+        // in it. So each <pre> is replaced in the flow by a plain element
+        // holding the same text fenced, and put back afterwards.
+        const swapped: { pre: any; stand: any; display: string }[] = [];
+        root.querySelectorAll("pre").forEach((el: any) => {
+          const code = (el.textContent ?? "").trim();
+          if (!code) return;
+          const stand = d.createElement("div");
+          // innerText follows layout, and layout collapses newlines in an
+          // ordinary block — the fence came out as one line and stopped
+          // looking like a fence at all.
+          stand.style.whiteSpace = "pre";
+          stand.textContent = "```\n" + code + "\n```";
+          el.parentNode?.insertBefore(stand, el);
+          swapped.push({ pre: el, stand, display: el.style.display });
+          el.style.display = "none";
+        });
+
         let t = (root.innerText || "").replace(/\n{3,}/g, "\n\n").trim();
+
+        for (const sw of swapped) {
+          sw.stand.parentNode?.removeChild(sw.stand);
+          sw.pre.style.display = sw.display;
+        }
 
         for (const m of marked) {
           if (m.text) m.el.nodeValue = m.text;
           else m.el.parentNode?.removeChild(m.el);
         }
 
-        // Code blocks are read from the DOM rather than from innerText.
-        // innerText follows layout, and in AI Mode a rendered <pre> does not
-        // reliably appear in it — the first C++ file this wrote came out as
-        // "#include " with the header missing. textContent always has it, so
-        // the blocks are appended fenced, which is also the shape the tool
-        // protocol looks for.
-        const blocks: string[] = [];
-        root.querySelectorAll("pre").forEach((el: any) => {
-          const code = (el.textContent ?? "").trim();
-          if (code && !blocks.includes(code)) blocks.push(code);
-        });
-        for (const b of blocks) {
-          if (!t.includes(b)) t += "\n\n```\n" + b + "\n```";
-          else t = t.replace(b, "```\n" + b + "\n```");
-        }
         noise.forEach((n: any, i: number) => {
           n.style.display = prev[i] ?? "";
         });
