@@ -29,7 +29,7 @@ import { bindLineOwner } from "./output.js";
 import { LineStream, remainder } from "./stream.js";
 import { createServer, listen, serveConfig } from "./serve.js";
 import { beginTurn, escWatcher, isInterrupted } from "./interrupt.js";
-import { chooseSkill } from "./route.js";
+import { chooseSkill, narrowedHint } from "./route.js";
 import { extractAttachments } from "./attachments.js";
 import { createSpawnTool, SPAWN_TOOL } from "./subagent.js";
 import { runAutonomously } from "./autonomous.js";
@@ -870,6 +870,7 @@ async function main(): Promise<void> {
         // fraction of a second and for no queries — asking the main model to
         // notice reached for a skill once in four tries, and five rewordings
         // did not move it.
+        let ask = prompt;
         if (plugins.length > 0 && !profile.sealed) {
           const route = await chooseSkill(prompt, allSkills(plugins));
           if (route.skill) {
@@ -879,15 +880,24 @@ async function main(): Promise<void> {
             await runSkill(route.skill, prompt, { autonomous: true });
             return true;
           }
-          // Why not, when it was asked. A router that silently declines is a
-          // router nobody can tell is running.
-          if (route.ms > 0 && process.env.GAHOOLE_ROUTE_QUIET !== "1") {
+          // A plugin, but not which of its commands. Deciding that is the half
+          // the local model gets wrong, so it goes on the question instead of
+          // being acted on.
+          if (route.narrowed) {
+            console.log(
+              `${DIM}  ${route.narrowed[0]!.plugin} · ${route.narrowed.length} commands · ` +
+                `narrowed locally in ${route.ms}ms${RESET}`,
+            );
+            ask = `${prompt}\n\n${narrowedHint(route.narrowed)}`;
+          } else if (route.ms > 0 && process.env.GAHOOLE_ROUTE_QUIET !== "1") {
+            // Why not, when it was asked. A router that silently declines is a
+            // router nobody can tell is running.
             console.log(`${DIM}  no skill · ${route.why ?? "?"} · ${route.ms}ms${RESET}`);
           }
         }
 
         const text = await session.run(
-          prompt || "この画像について説明してください。",
+          ask || "この画像について説明してください。",
           undefined,
           paths,
         );

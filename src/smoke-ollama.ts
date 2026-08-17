@@ -124,7 +124,7 @@ try {
 // and five rewordings of the prompt did not move it. Choosing between a
 // handful of one-line descriptions is a classification, not a judgement.
 {
-  const { chooseSkill, routingPrompt } = await import("./route.js");
+  const { chooseSkill, narrowedHint, routingPrompt } = await import("./route.js");
   const skills = [
     {
       name: "doc-new",
@@ -155,14 +155,32 @@ try {
     host,
     model: "qwen3:4b",
   });
-  assert.equal(hit.skill?.name, "doc-new");
+  assert.deepEqual(hit.narrowed?.map((x) => x.name), ["doc-new", "doc-build"]);
   assert.equal(seen.messages?.[1]?.content, "sales.csv を Excel にして");
 
+  // Two commands from the same plugin: which one is the half the local model
+  // gets wrong, so it is narrowed rather than dispatched.
   reply = JSON.stringify({ skill: "doc-build" });
-  assert.equal(
-    (await chooseSkill("doc.toml から作って", skills, { host, model: "qwen3:4b" })).skill?.name,
-    "doc-build",
+  const both = await chooseSkill("doc.toml から作って", skills, { host, model: "qwen3:4b" });
+  assert.equal(both.skill, undefined, "not dispatched");
+  assert.deepEqual(
+    both.narrowed?.map((s) => s.name),
+    ["doc-new", "doc-build"],
+    "the plugin's commands, in the order they were installed",
   );
+
+  const line = narrowedHint(both.narrowed ?? []);
+  assert.ok(line.includes("doc-new") && line.includes("doc-build"));
+  assert.ok(line.includes("doc-skill"), "and which plugin they came from");
+  assert.match(line, /違えば普通に答えて/, "declinable, like the standing hint");
+  assert.equal(narrowedHint([]), "");
+
+  // One command, and there is nothing to choose between.
+  const alone = [skills[0]!];
+  reply = JSON.stringify({ skill: "doc-new" });
+  const only = await chooseSkill("csv を Excel に", alone, { host, model: "qwen3:4b" });
+  assert.equal(only.skill?.name, "doc-new", "dispatched, because there is no sibling");
+  assert.equal(only.narrowed, undefined);
 
   // Fails open in every direction, because "no skill" is what happened before
   // this existed and is never the wrong answer.
@@ -198,7 +216,7 @@ try {
   delete process.env.GAHOOLE_ROUTE;
 }
 
-console.log("ok — ollama: readiness, chat, its own history, think tags, failures");
+console.log("ok — ollama: readiness, chat, its own history, think tags, failures, routing and narrowing");
 } finally {
   server.close();
 }

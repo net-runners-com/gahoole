@@ -23,10 +23,18 @@ import type { Skill } from "./plugins.js";
  * skill applies at all is reliable: nine requests, four that match and five
  * that plainly do not, 9/9. Deciding *which* of two sibling commands is not —
  * asked to make a spreadsheet from a CSV it chose doc-build, whose whole
- * premise is an existing spec file, over doc-new, which writes one. So the
- * useful half is the negative: ordinary questions are not derailed into
- * procedures, and a plugin whose commands overlap will still need the main
- * model to pick between them.
+ * premise is an existing spec file, over doc-new, which writes one.
+ *
+ * Two things were tried against that and neither worked: asking twice with the
+ * list in both orders (it was not position bias — the same wrong answer came
+ * back both ways) and putting each skill's argument-hint in the prompt (the
+ * word "Excel" in doc-build's description outweighs it).
+ *
+ * So the work is split where the measurement puts it. This decides *whether*
+ * a plugin applies, which it is good at. When the plugin it lands on has more
+ * than one command, *which* one is left to the model that is about to do the
+ * work — narrowed to that plugin's commands, which is a far easier question
+ * than the one it fails today, and costs no extra query.
  */
 
 /** Long enough for a local answer, short enough not to be felt. */
@@ -61,7 +69,15 @@ export function routingPrompt(skills: Skill[]): string {
 }
 
 export interface RouteResult {
+  /** The one to run, when a plugin applies and has only one command. */
   skill?: Skill;
+  /**
+   * The commands of the plugin that applies, when it has several.
+   *
+   * Not dispatched: named in the question instead, so the model that is about
+   * to do the work chooses between two things it can already see the point of.
+   */
+  narrowed?: Skill[];
   /** Why there is no skill, when there is not — for the caller to show. */
   why?: string;
   ms: number;
@@ -131,11 +147,40 @@ export async function chooseSkill(
 
     const picked = skills.find((s) => s.name === chosen);
     if (!picked) return { why: chosen || NONE, ms: Date.now() - at };
-    return { skill: picked, ms: Date.now() - at };
+
+    // Which plugin, not which command.
+    const siblings = skills.filter((s) => s.plugin === picked.plugin);
+    if (siblings.length === 1) return { skill: picked, ms: Date.now() - at };
+    return { narrowed: siblings, ms: Date.now() - at };
   } catch (e) {
     return {
       why: e instanceof Error ? e.message.slice(0, 60) : String(e),
       ms: Date.now() - at,
     };
   }
+}
+
+/**
+ * The line that goes on a question when a plugin applies but not which command.
+ *
+ * Narrower than the standing hint, which names every skill installed. This one
+ * names two or three, with what each is for, at the moment one of them is
+ * almost certainly right — which is the question the model is good at and the
+ * local one is not.
+ */
+export function narrowedHint(skills: Skill[]): string {
+  if (skills.length === 0) return "";
+  const gist = (s: Skill): string => {
+    const first = (s.description.split(/[。.]\s|。/)[0] ?? "").trim();
+    return first.length > 60 ? `${first.slice(0, 60)}…` : first;
+  };
+  const listed = skills.map((s) => `${s.name}（${gist(s)}）`).join("、");
+  // Phrased so it can be declined, like the standing hint and for the same
+  // reason. The local model is right about the plugin most of the time and not
+  // always — measured 10 of 11, the miss being "run this repository's tests" —
+  // and a line that leaves no way out turns its one mistake into the model's.
+  return (
+    `[${skills[0]!.plugin} が該当しそうです: ${listed}。` +
+    `どれかが実際に合っていれば use_skill で選び、違えば普通に答えてください。]`
+  );
 }
