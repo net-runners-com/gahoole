@@ -5,6 +5,7 @@
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { Lifecycle } from "./lifecycle.js";
 import { registerFileGuard } from "./hooks/file-guard.js";
@@ -28,6 +29,11 @@ try {
   // --- write, read, edit -----------------------------------------------------
   const w = await run("write_file", { path: at("a.txt"), content: "one\ntwo\n" });
   assert.equal(w.created, true);
+  // The size in the result comes from the filesystem, not from the input: a
+  // write that reports success for a file that is not there teaches the model
+  // it succeeded, and it says so to the user.
+  assert.equal(w.verified, true);
+  assert.equal(w.bytes, fs.statSync(path.join(SCRATCH, "a.txt")).size);
   assert.equal(fs.readFileSync(path.join(SCRATCH, "a.txt"), "utf8"), "one\ntwo\n");
 
   const r = await run("read_file", { path: at("a.txt") });
@@ -37,8 +43,9 @@ try {
   const ranged = await run("read_file", { path: at("a.txt"), offset: 2, limit: 1 });
   assert.equal(ranged.content, "two");
 
-  await run("edit_file", { path: at("a.txt"), old: "two", new: "three" });
+  const e = await run("edit_file", { path: at("a.txt"), old: "two", new: "three" });
   assert.equal(fs.readFileSync(path.join(SCRATCH, "a.txt"), "utf8"), "one\nthree\n");
+  assert.equal(e.verified, true, "the new text was read back out of the file");
 
   // An edit has to be unambiguous, and say so when it is not.
   await run("write_file", { path: at("dup.txt"), content: "x\nx\n" });
@@ -119,12 +126,21 @@ try {
   await run("write_file", { path: at("gone.txt"), content: "bye" });
   const del = await run("delete_file", { path: at("gone.txt") });
   assert.ok(!fs.existsSync(path.join(SCRATCH, "gone.txt")), "gone from where it was");
+  // The trash lives under the home directory, so its path is shown as one —
+  // shortened rather than as a chain of `..` back out of the project.
   assert.ok(
-    fs.existsSync(path.join(ROOT, del.trashed)),
-    `and recoverable at ${del.trashed}`,
+    del.trashed.startsWith("~/") || path.isAbsolute(del.trashed),
+    `a readable path, not a climb: ${del.trashed}`,
   );
-  assert.equal(fs.readFileSync(path.join(ROOT, del.trashed), "utf8"), "bye");
-  trash.push(path.join(ROOT, del.trashed));
+  assert.ok(!del.trashed.includes(".."), "no ..");
+  const trashed = del.trashed.replace(/^~/, os.homedir());
+  assert.ok(fs.existsSync(trashed), `and recoverable at ${del.trashed}`);
+  assert.equal(fs.readFileSync(trashed, "utf8"), "bye");
+  // Both halves checked: gone from where it was, and there to restore.
+  // "Deleted" is worth nothing if the file is still there, and "recoverable"
+  // is worth less than nothing if it is not.
+  assert.equal(del.verified, true);
+  trash.push(trashed);
 
   await assert.rejects(() => run("delete_file", { path: at("nope.txt") }), /no such file/);
   await assert.rejects(
@@ -317,7 +333,27 @@ try {
     /disabled/,
   );
 
-  console.log(
+  // --- a write that cannot be confirmed is not a success ----------------------
+//
+// The check is on the filesystem rather than on the call, so it catches the
+// case the model cannot: the write returned, and the file is not what it says.
+{
+  const realWrite = fs.promises.writeFile;
+  (fs.promises as { writeFile: unknown }).writeFile = (async () => {
+    // Wrote nothing at all.
+  }) as typeof fs.promises.writeFile;
+  try {
+    await assert.rejects(
+      () => run("write_file", { path: at("ghost.txt"), content: "hello" }),
+      /not there/,
+      "a write that left no file is reported as a failure",
+    );
+  } finally {
+    (fs.promises as { writeFile: unknown }).writeFile = realWrite;
+  }
+}
+
+console.log(
     `ok — file tools: ${Object.keys(tools).length} tools, ${MUTATING.size} gated, guard and approval enforced`,
   );
 } finally {

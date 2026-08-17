@@ -1,6 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { projectDir } from "./paths.js";
 
@@ -47,7 +48,21 @@ function resolveInRoot(rel: string, mode: "read" | "write" = "write"): string {
   throw new Error(`path escapes the project root: ${rel}`);
 }
 
-const rel = (abs: string) => path.relative(ROOT, abs) || ".";
+/**
+ * A path as a person would write it.
+ *
+ * Relative to the project when it is inside it, and absolute — with the home
+ * directory shortened — when it is not. The trash lives under ~/.gahoole now,
+ * and a plain `path.relative` rendered it as seven levels of `..` followed by
+ * the absolute path anyway.
+ */
+const rel = (abs: string): string => {
+  const inside = path.relative(ROOT, abs);
+  if (inside && !inside.startsWith("..")) return inside;
+  if (abs === ROOT) return ".";
+  const home = os.homedir();
+  return abs.startsWith(home + path.sep) ? `~${abs.slice(home.length)}` : abs;
+};
 
 export const readFile = createTool({
   id: "read_file",
@@ -97,13 +112,29 @@ export const writeFile = createTool({
     path: z.string(),
     bytes: z.number(),
     created: z.boolean(),
+    /** Read back from disk after writing, not taken from the input. */
+    verified: z.boolean(),
   }),
   execute: async ({ path: p, content }) => {
     const target = resolveInRoot(p);
     const created = !(await exists(target));
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.writeFile(target, content, "utf8");
-    return { path: rel(target), bytes: Buffer.byteLength(content), created };
+
+    // Checked, not assumed. A write that reports success for a file that is
+    // not there teaches the model it succeeded, and it says so to the user —
+    // which is exactly what happened when a fenced block went to the wrong
+    // call and a file was created with nothing in it. The size comes from the
+    // filesystem so the number in the result is the number on disk.
+    const stat = await fs.stat(target).catch(() => undefined);
+    if (!stat) throw new Error(`wrote ${rel(target)} but it is not there`);
+    const bytes = Buffer.byteLength(content);
+    if (stat.size !== bytes) {
+      throw new Error(
+        `wrote ${bytes} bytes to ${rel(target)} but it holds ${stat.size}`,
+      );
+    }
+    return { path: rel(target), bytes: stat.size, created, verified: true };
   },
 });
 
@@ -116,7 +147,11 @@ export const editFile = createTool({
     old: z.string().describe("Text to replace; must match exactly and once"),
     new: z.string().describe("Replacement text"),
   }),
-  outputSchema: z.object({ path: z.string(), replaced: z.number() }),
+  outputSchema: z.object({
+    path: z.string(),
+    replaced: z.number(),
+    verified: z.boolean(),
+  }),
   execute: async ({ path: p, old, new: next }) => {
     const target = resolveInRoot(p);
     const text = await fs.readFile(target, "utf8");
@@ -128,7 +163,14 @@ export const editFile = createTool({
       );
     }
     await fs.writeFile(target, text.replace(old, next), "utf8");
-    return { path: rel(target), replaced: 1 };
+
+    // Read back, because "replaced: 1" is a claim about the file and not
+    // about the call.
+    const after = await fs.readFile(target, "utf8").catch(() => "");
+    if (next && !after.includes(next)) {
+      throw new Error(`edited ${rel(target)} but the new text is not in it`);
+    }
+    return { path: rel(target), replaced: 1, verified: true };
   },
 });
 
@@ -165,7 +207,12 @@ export const deleteFile = createTool({
   inputSchema: z.object({
     path: z.string().describe("Path relative to the project root"),
   }),
-  outputSchema: z.object({ path: z.string(), trashed: z.string() }),
+  outputSchema: z.object({
+    path: z.string(),
+    trashed: z.string(),
+    /** Confirmed after the move: gone from there, and there to restore. */
+    verified: z.boolean(),
+  }),
   execute: async ({ path: p }) => {
     const target = resolveInRoot(p);
     if (target === ROOT) throw new Error("refusing to delete the project root");
@@ -180,7 +227,16 @@ export const deleteFile = createTool({
     const dest = path.join(projectDir(), "trash", stamp, rel(target));
     await fs.mkdir(path.dirname(dest), { recursive: true });
     await fs.rename(target, dest);
-    return { path: rel(target), trashed: rel(dest) };
+
+    // Both halves checked. "Deleted" is worth nothing if the file is still
+    // there, and "recoverable" is worth less than nothing if it is not.
+    if (await exists(target)) {
+      throw new Error(`${rel(target)} is still there after being deleted`);
+    }
+    if (!(await exists(dest))) {
+      throw new Error(`${rel(target)} was removed but is not in the trash`);
+    }
+    return { path: rel(target), trashed: rel(dest), verified: true };
   },
 });
 

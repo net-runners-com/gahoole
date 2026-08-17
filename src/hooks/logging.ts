@@ -66,7 +66,18 @@ export function registerConsoleTrace(lifecycle: Lifecycle): void {
       const denied = (e.output as { denied?: boolean } | undefined)?.denied;
       const status = e.error ? "failed" : denied ? "denied" : "ok";
       const color = e.error ? "\x1b[31m" : denied ? "\x1b[33m" : "\x1b[2m";
-      log(`${color}  └ ${e.toolName} ${status} · ${e.ms}ms\x1b[0m`);
+      // What the tool confirmed, when it confirmed something. A write that
+      // says "ok" and a write that says "ok · 340 bytes" are different
+      // statements, and the second is the one worth printing: it was read
+      // back off the disk rather than taken from the call.
+      const out = (e.output ?? {}) as { bytes?: number; trashed?: string };
+      const proof =
+        typeof out.bytes === "number"
+          ? ` · ${out.bytes} bytes`
+          : out.trashed
+            ? ` · in ${out.trashed}`
+            : "";
+      log(`${color}  └ ${e.toolName} ${status}${proof} · ${e.ms}ms\x1b[0m`);
     })
     .on("Stop", (e) =>
       log(

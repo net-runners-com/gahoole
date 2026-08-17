@@ -416,8 +416,14 @@ export class ToolLoop implements Backend {
         .filter(([k, v]) => given[k] === undefined && v?.isOptional?.() !== true)
         .map(([k]) => k);
       if (missing.length > 0) {
+        // Said as an instruction rather than a diagnosis, and with both ways
+        // of sending a body. A model that was told "missing content" emitted
+        // exactly the same call again, twice.
         const error = new Error(
-          `${name} is missing ${missing.join(", ")} — file contents go in a fenced code block on the line after the call`,
+          `${name} is missing ${missing.join(", ")}, so nothing was written. ` +
+            `Send the call again with the text after it, either in a fenced ` +
+            `code block or between ${"TOOL_BODY:"} and ${"TOOL_END"} lines. ` +
+            `Do not repeat the call without one.`,
         );
         await this.#hooks.afterToolCall({ toolName: name, error });
         return { error };
