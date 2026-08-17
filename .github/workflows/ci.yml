@@ -1,5 +1,15 @@
 name: ci
 
+# What is not here, and why.
+#
+# `npm run smoke:live` — smoke:aimode and the canary — asks Google real
+# questions. It cannot run here: it needs a browser profile that Google will
+# answer, from an address it will answer, and every run spends queries against
+# a limit measured at about 98 per profile. A scheduled job would burn that
+# limit to tell us something only a person about to use the thing needs to
+# know. Run it by hand when the page might have changed; the canary names the
+# selector that broke rather than reporting a symptom.
+
 on:
   push:
     branches: [main]
