@@ -24,8 +24,16 @@ export interface OllamaOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Small and not a reasoning model, both on purpose.
+ *
+ * qwen3:4b was tried first and is the wrong tool: it reasons before answering
+ * whatever it is told, and a one-word classification took seven to thirteen
+ * seconds — as long as the browser it was meant to save. The same four
+ * questions on qwen2.5:3b came back correct in 0.3 to 0.4 seconds.
+ */
 export const ollamaModel = (): string =>
-  process.env.GAHOOLE_OLLAMA_MODEL ?? "qwen3:4b";
+  process.env.GAHOOLE_OLLAMA_MODEL ?? "qwen2.5:3b";
 
 export const ollamaHost = (): string =>
   process.env.GAHOOLE_OLLAMA_HOST ?? "http://127.0.0.1:11434";

@@ -362,6 +362,11 @@ try {
   {
     process.env.GAHOOLE_BACKEND = "stub";
     process.env.GAHOOLE_STUB = JSON.stringify(["OBS find something was learned here"]);
+    // Summaries prefer a local model when one is running, and on a machine
+    // where Ollama is up this test would quietly measure that instead of what
+    // it means to. A test that depends on what happens to be installed is not
+    // a test.
+    process.env.GAHOOLE_LOCAL_SUMMARY = "0";
     Session.backend = createBackend("stub", {} as never, "r", () => "s");
 
     const empty = await summarizeThread(
@@ -388,6 +393,7 @@ try {
     assert.match(said, /OBS find/, "and the backend's answer comes back");
     Session.backend = undefined as never;
     delete process.env.GAHOOLE_STUB;
+    delete process.env.GAHOOLE_LOCAL_SUMMARY;
   }
 
   // =========================================================================

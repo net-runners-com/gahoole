@@ -111,7 +111,87 @@ try {
   // --- the default is named, so it can be pulled without reading the source -------
   assert.match(ollamaModel(), /^\S+:\S+$/);
 
-  console.log("ok — ollama: readiness, chat, its own history, think tags, failures");
+  // --- routing a request to a skill --------------------------------------------
+//
+// Asking the main model to notice a skill reached for one once in four tries,
+// and five rewordings of the prompt did not move it. Choosing between a
+// handful of one-line descriptions is a classification, not a judgement.
+{
+  const { chooseSkill, routingPrompt } = await import("./route.js");
+  const skills = [
+    {
+      name: "doc-new",
+      description: "データから Excel・Markdown・HTML のレポートを作る。表も作れる。",
+      body: "",
+      plugin: "doc-skill",
+      root: "/tmp/doc-skill",
+    },
+    {
+      name: "doc-build",
+      description: "doc.toml から出力を組み立てる。",
+      body: "",
+      plugin: "doc-skill",
+      root: "/tmp/doc-skill",
+    },
+  ] as never as import("./plugins.js").Skill[];
+
+  // The names and what they are for, and a way to say neither.
+  const asked = routingPrompt(skills);
+  assert.match(asked, /doc-new/);
+  assert.match(asked, /doc-build/);
+  assert.match(asked, /none/);
+
+  // The router constrains the reply with a schema, so the stub answers in the
+  // shape a constrained model does.
+  reply = JSON.stringify({ skill: "doc-new" });
+  const hit = await chooseSkill("sales.csv を Excel にして", skills, {
+    host,
+    model: "qwen3:4b",
+  });
+  assert.equal(hit.skill?.name, "doc-new");
+  assert.equal(seen.messages?.[1]?.content, "sales.csv を Excel にして");
+
+  reply = JSON.stringify({ skill: "doc-build" });
+  assert.equal(
+    (await chooseSkill("doc.toml から作って", skills, { host, model: "qwen3:4b" })).skill?.name,
+    "doc-build",
+  );
+
+  // Fails open in every direction, because "no skill" is what happened before
+  // this existed and is never the wrong answer.
+  reply = JSON.stringify({ skill: "none" });
+  const miss = await chooseSkill("おはよう", skills, { host, model: "qwen3:4b" });
+  assert.equal(miss.skill, undefined);
+  assert.match(miss.why ?? "", /none/);
+
+  // A model that ignored the schema chose nothing, which is the safe answer.
+  reply = "そんなスキルはありません";
+  assert.equal(
+    (await chooseSkill("何か", skills, { host, model: "qwen3:4b" })).skill,
+    undefined,
+    "an answer that is not one of the names is not a choice",
+  );
+
+  reply = JSON.stringify({ skill: "doc-new" });
+  assert.equal(
+    (await chooseSkill("x", skills, { host: "http://127.0.0.1:1" })).skill,
+    undefined,
+    "nothing listening is not a choice either",
+  );
+  assert.equal(
+    (await chooseSkill("x", [], { host })).skill,
+    undefined,
+    "and neither is having no skills",
+  );
+
+  process.env.GAHOOLE_ROUTE = "0";
+  const off = await chooseSkill("sales.csv を Excel にして", skills, { host });
+  assert.equal(off.skill, undefined);
+  assert.match(off.why ?? "", /routing off/);
+  delete process.env.GAHOOLE_ROUTE;
+}
+
+console.log("ok — ollama: readiness, chat, its own history, think tags, failures");
 } finally {
   server.close();
 }

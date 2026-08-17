@@ -29,6 +29,7 @@ import { bindLineOwner } from "./output.js";
 import { LineStream, remainder } from "./stream.js";
 import { createServer, listen } from "./serve.js";
 import { beginTurn, cancelTurn, isInterrupted } from "./interrupt.js";
+import { chooseSkill } from "./route.js";
 import { extractAttachments } from "./attachments.js";
 import { createSpawnTool, SPAWN_TOOL } from "./subagent.js";
 import { runAutonomously } from "./autonomous.js";
@@ -888,6 +889,27 @@ async function main(): Promise<void> {
         stream.reset();
         shown.length = 0;
         picked.current = undefined;
+
+        // Does an installed skill already do this? Decided locally, in a
+        // fraction of a second and for no queries — asking the main model to
+        // notice reached for a skill once in four tries, and five rewordings
+        // did not move it.
+        if (plugins.length > 0 && !profile.sealed) {
+          const route = await chooseSkill(prompt, allSkills(plugins));
+          if (route.skill) {
+            console.log(
+              `${DIM}  ${route.skill.plugin}/${route.skill.name} · chosen locally in ${route.ms}ms${RESET}`,
+            );
+            await runSkill(route.skill, prompt, { autonomous: true });
+            return true;
+          }
+          // Why not, when it was asked. A router that silently declines is a
+          // router nobody can tell is running.
+          if (route.ms > 0 && process.env.GAHOOLE_ROUTE_QUIET !== "1") {
+            console.log(`${DIM}  no skill · ${route.why ?? "?"} · ${route.ms}ms${RESET}`);
+          }
+        }
+
         const text = await session.run(
           prompt || "この画像について説明してください。",
           undefined,
