@@ -27,6 +27,7 @@ import {
 import { Spinner } from "./spinner.js";
 import { bindLineOwner } from "./output.js";
 import { LineStream, remainder } from "./stream.js";
+import { createServer, listen } from "./serve.js";
 import { extractAttachments } from "./attachments.js";
 import { createSpawnTool, SPAWN_TOOL } from "./subagent.js";
 import { runAutonomously } from "./autonomous.js";
@@ -104,6 +105,8 @@ usage
   gahoole --continue, -c     resume the most recent session
   gahoole --resume <prefix>  resume a session by id prefix
   gahoole --profile <name>   start in a profile (athena, pythia, daedalus, argus)
+  gahoole --serve [port]     answer on http://127.0.0.1:8765/v1/chat/completions
+  gahoole --host <addr>      bind the server somewhere other than localhost
   gahoole --trust            trust this folder without asking
   gahoole --no-banner        skip the startup art
   gahoole --version, -v      print the version
@@ -518,11 +521,16 @@ async function main(): Promise<void> {
     console.log(statusLine(info(), !process.env.NO_COLOR) + suffix);
   };
 
-  const interactive = stdin.isTTY;
+  // Serving replaces the prompt: the questions come over HTTP instead.
+  const serveIdx = argv.indexOf("--serve");
+  const serving = serveIdx !== -1;
+  const hostIdx = argv.indexOf("--host");
+
+  const interactive = stdin.isTTY && !serving;
   const rl = interactive
     ? readline.createInterface({ input: stdin, output: stdout })
     : undefined;
-  const batchInput = interactive ? "" : readFileSync(0, "utf8");
+  const batchInput = interactive || serving ? "" : readFileSync(0, "utf8");
 
   // Approval runs mid-turn, so the spinner has to get out of the way for the
   // question and come back after.
@@ -845,7 +853,37 @@ async function main(): Promise<void> {
   };
 
   try {
-    if (interactive) {
+    if (serving) {
+      const port = Number(argv[serveIdx + 1] ?? process.env.GAHOOLE_PORT ?? 8765);
+      const host =
+        hostIdx === -1 ? (process.env.GAHOOLE_HOST ?? "127.0.0.1") : (argv[hostIdx + 1] ?? "127.0.0.1");
+
+      const server = createServer({
+        deps: {
+          model: info().model,
+          session: () => session,
+          run: (p) => session.run(p),
+        },
+        onRequest: (line) => console.log(`\x1b[2m› ${line}\x1b[0m`),
+      });
+      const bound = await listen(server, port, host);
+
+      console.log(
+        `${DIM}serving http://${host}:${bound}/v1/chat/completions${RESET}\n` +
+          `${DIM}  model ${info().model} · approval ${approval.mode}` +
+          `${host === "127.0.0.1" ? "" : " · reachable from the network"}${RESET}\n` +
+          `${DIM}  one request at a time; Ctrl-C to stop${RESET}\n`,
+      );
+      if (approval.mode !== "allow") {
+        console.log(
+          `${DIM}  writes, deletes and commands are refused — nobody is here to ask.` +
+            ` Start with --allow to permit them.${RESET}\n`,
+        );
+      }
+
+      // Held open by the server; the finally below runs on Ctrl-C.
+      await new Promise<void>((resolve) => server.once("close", () => resolve()));
+    } else if (interactive) {
       while (true) {
         let line: string;
         try {
