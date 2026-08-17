@@ -97,6 +97,34 @@ const json = (res: http.ServerResponse, code: number, body: unknown): void => {
 const fail = (res: http.ServerResponse, code: number, message: string): void =>
   json(res, code, { error: { message, type: "invalid_request_error" } });
 
+/**
+ * Where to listen, from the command line and the environment.
+ *
+ * Pulled out of main() because the flag after `--serve` is not necessarily a
+ * port: `gahoole --serve --host 0.0.0.0` read "--host" as the port and handed
+ * `listen` a NaN. A number is only a port if it looks like one.
+ */
+export function serveConfig(
+  argv: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): { serving: boolean; port: number; host: string } {
+  const at = argv.indexOf("--serve");
+  const next = at === -1 ? undefined : argv[at + 1];
+  const given = next !== undefined && /^\d+$/.test(next) ? Number(next) : undefined;
+  const fromEnv = env.GAHOOLE_PORT !== undefined && /^\d+$/.test(env.GAHOOLE_PORT)
+    ? Number(env.GAHOOLE_PORT)
+    : undefined;
+
+  const hostAt = argv.indexOf("--host");
+  const hostArg = hostAt === -1 ? undefined : argv[hostAt + 1];
+  const host =
+    hostArg !== undefined && !hostArg.startsWith("-")
+      ? hostArg
+      : (env.GAHOOLE_HOST ?? "127.0.0.1");
+
+  return { serving: at !== -1, port: given ?? fromEnv ?? 8765, host };
+}
+
 export function createServer(opts: ServeOptions): http.Server {
   const { deps } = opts;
 

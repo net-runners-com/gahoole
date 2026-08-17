@@ -410,5 +410,97 @@ function run(
   }
 }
 
-console.log("ok — cli: answers, commands, profiles, approval, sessions, trust");
+// --- where --serve listens ------------------------------------------------
+//
+// The flag after --serve is not necessarily a port. `gahoole --serve --host
+// 0.0.0.0` read "--host" as one and handed listen() a NaN.
+{
+  const { serveConfig } = await import("./serve.js");
+  const bare: NodeJS.ProcessEnv = {};
+
+  assert.equal(serveConfig([], bare).serving, false);
+  assert.equal(serveConfig(["--serve"], bare).serving, true);
+  assert.equal(serveConfig(["--serve"], bare).port, 8765, "a default worth having");
+  assert.equal(serveConfig(["--serve", "9000"], bare).port, 9000);
+  assert.equal(serveConfig(["--serve", "0"], bare).port, 0, "0 means pick one");
+
+  // The bug: the next flag is not a port.
+  assert.equal(serveConfig(["--serve", "--host", "0.0.0.0"], bare).port, 8765);
+  assert.equal(serveConfig(["--serve", "--host", "0.0.0.0"], bare).host, "0.0.0.0");
+  assert.equal(serveConfig(["--serve", "--allow"], bare).port, 8765);
+
+  // Localhost unless asked otherwise, in both directions.
+  assert.equal(serveConfig(["--serve"], bare).host, "127.0.0.1");
+  assert.equal(serveConfig(["--serve", "--host"], bare).host, "127.0.0.1", "no address given");
+  assert.equal(serveConfig(["--serve", "--host", "--allow"], bare).host, "127.0.0.1");
+
+  // The environment fills in, and the command line wins.
+  assert.equal(serveConfig(["--serve"], { GAHOOLE_PORT: "7000" }).port, 7000);
+  assert.equal(serveConfig(["--serve", "9000"], { GAHOOLE_PORT: "7000" }).port, 9000);
+  assert.equal(serveConfig(["--serve"], { GAHOOLE_PORT: "nonsense" }).port, 8765);
+  assert.equal(serveConfig(["--serve"], { GAHOOLE_HOST: "0.0.0.0" }).host, "0.0.0.0");
+}
+
+// --- Esc, while a turn is running ------------------------------------------
+{
+  const { escWatcher, beginTurn, cancelled } = await import("./interrupt.js");
+
+  const raw: boolean[] = [];
+  let handler: ((b: Buffer) => void) | undefined;
+  let stopped = 0;
+  const fake = {
+    isTTY: true,
+    setRawMode: (on: boolean) => raw.push(on),
+    on: (_: "data", fn: (b: Buffer) => void) => (handler = fn),
+    off: (_: "data", fn: (b: Buffer) => void) => {
+      if (handler === fn) handler = undefined;
+    },
+  };
+  const watch = escWatcher(fake, { onCancel: () => stopped++ });
+
+  beginTurn();
+  watch(true);
+  assert.deepEqual(raw, [true], "raw mode, to see a single key");
+  assert.ok(handler, "and something watching for it");
+
+  // Ordinary typing is not an interrupt.
+  handler?.(Buffer.from("a"));
+  assert.equal(cancelled(), false);
+  // Nor is an arrow key, which starts with the same byte and is longer.
+  handler?.(Buffer.from("\x1b[A"));
+  assert.equal(cancelled(), false, "an arrow key is not Esc");
+
+  handler?.(Buffer.from("\x1b"));
+  assert.equal(cancelled(), true);
+  assert.equal(stopped, 1, "and the spinner is told");
+
+  // Raw mode is always given back.
+  watch(false);
+  assert.deepEqual(raw, [true, false]);
+  assert.equal(handler, undefined, "and stdin is let go of");
+
+  // Asking twice for the same state does nothing, which is what keeps the
+  // pause/resume around approval from leaving the terminal in raw mode.
+  watch(false);
+  watch(true);
+  watch(true);
+  assert.deepEqual(raw, [true, false, true]);
+  watch(false);
+
+  // Without a terminal there is no key to watch for.
+  const headless = { ...fake, isTTY: false };
+  const off = escWatcher(headless);
+  off(true);
+  assert.deepEqual(raw, [true, false, true, false], "nothing more happened");
+
+  // And a run that is being driven from above is not interruptible by hand.
+  const disabled = escWatcher(fake, { enabled: () => false });
+  disabled(true);
+  assert.equal(raw.length, 4);
+
+  beginTurn();
+  assert.equal(cancelled(), false, "the next turn starts clean");
+}
+
+console.log("ok — cli: answers, commands, profiles, approval, sessions, trust, --serve, Esc");
 process.exit(0);

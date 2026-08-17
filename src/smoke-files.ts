@@ -353,6 +353,88 @@ try {
   }
 }
 
+// --- a plugin's own directory ------------------------------------------------
+//
+// The first thing the doc-skill plugin does is read its own reference.md, and
+// confining reads to the project root refused it — which makes any plugin
+// that ships more than prose unusable. Read only, and registered by the
+// program: the model can use what is already on disk, and cannot widen it.
+{
+  const { allowReadRoot, tools: t } = await import("./tools.js");
+  const { allowReadOutsideRoot } = await import("./hooks/file-guard.js");
+
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "gahoole-plugin-"));
+  fs.writeFileSync(path.join(outside, "reference.md"), "how this plugin works");
+
+  const read = t.read_file.execute as unknown as (i: { path: string }) => Promise<{ content: string }>;
+  const at = path.join(outside, "reference.md");
+
+  await assert.rejects(() => read({ path: at }), /escapes the project root/);
+
+  allowReadRoot(outside);
+  assert.equal((await read({ path: at })).content, "how this plugin works");
+
+  // Writing there is still refused: installing a plugin is not agreeing to
+  // have it rewritten.
+  const write = t.write_file.execute as unknown as (i: {
+    path: string;
+    content: string;
+  }) => Promise<unknown>;
+  await assert.rejects(
+    () => write({ path: at, content: "no" }),
+    /escapes the project root/,
+    "readable is not writable",
+  );
+
+  // The guard keeps its own list, and answers the same way.
+  const plugins = new Lifecycle();
+  registerFileGuard(plugins);
+  const asks = (toolName: string, target: string) =>
+    plugins.emitPreToolUse({
+      sessionId: "s",
+      turnId: "t",
+      toolCallId: "c",
+      toolName,
+      input: { path: target },
+    });
+
+  assert.match((await asks("read_file", at))?.deny ?? "", /outside the project/);
+  allowReadOutsideRoot(outside);
+  assert.equal((await asks("read_file", at))?.deny, undefined);
+  assert.match(
+    (await asks("write_file", at))?.deny ?? "",
+    /outside the project/,
+    "and still not writable",
+  );
+
+  fs.rmSync(outside, { recursive: true, force: true });
+}
+
+// --- the registry is the exports ---------------------------------------------
+//
+// Every tool is exported by name and again in `tools`; the two drifting apart
+// would mean a tool that is tested and not reachable, or the reverse.
+{
+  const mod = await import("./tools.js");
+  const pairs: [string, unknown][] = [
+    ["read_file", mod.readFile],
+    ["write_file", mod.writeFile],
+    ["write_note", mod.writeNote],
+    ["edit_file", mod.editFile],
+    ["list_files", mod.listFiles],
+    ["delete_file", mod.deleteFile],
+    ["search_files", mod.searchFiles],
+    ["run_command", mod.runCommand],
+  ];
+  for (const [id, fn] of pairs) {
+    assert.equal(
+      (mod.tools as Record<string, unknown>)[id],
+      fn,
+      `${id} in the registry is the export`,
+    );
+  }
+}
+
 console.log(
     `ok — file tools: ${Object.keys(tools).length} tools, ${MUTATING.size} gated, guard and approval enforced`,
   );

@@ -123,6 +123,14 @@ for (const decorated of [
 
 // The marker-pair form, for when no fence survived.
 {
+  // The literals below are the markers, spelled out — a test that built them
+  // from the constants would pass if both changed together, and the preamble
+  // teaches the spelling to the model.
+  {
+    const { BODY_PREFIX, BODY_SUFFIX } = await import("./tool-protocol.js");
+    assert.equal(BODY_PREFIX, "TOOL_BODY:");
+    assert.equal(BODY_SUFFIX, "TOOL_END");
+  }
   assert.equal(parseBody("TOOL_BODY:\nhello\nTOOL_END"), "hello");
   const calls = parseCalls(
     [call('{"tool":"write_file","input":{"path":"a"}}'), "TOOL_BODY:", "hello", "TOOL_END"].join("\n"),

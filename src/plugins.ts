@@ -257,7 +257,18 @@ export function createSkillTool(
     description: `Load and follow an installed skill — ${listed}.`,
     inputSchema: z.object({
       name: z.string().describe("Which skill"),
-      args: z.string().optional().describe("What the skill should work on"),
+      // A string, or whatever the model sent instead.
+      //
+      // This said `z.string()`, and below there is a branch that turns an
+      // object into JSON because models pass one about as often as a string.
+      // That branch was unreachable: the schema is enforced before `execute`
+      // is called, so an object came back as a validation error and the skill
+      // was never selected at all. The schema is the thing that has to allow
+      // it; the description still says what is wanted.
+      args: z
+        .union([z.string(), z.record(z.unknown())])
+        .optional()
+        .describe("What the skill should work on"),
     }),
     outputSchema: z.object({ skill: z.string(), note: z.string() }),
     execute: async (input: { name: string; args?: unknown }) => {

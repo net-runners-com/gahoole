@@ -138,7 +138,18 @@ try {
     assert.ok(fs.existsSync(inRepo("settings.json")));
   }
 
-  console.log("ok — paths: slug, one directory per project, settings precedence, migration");
+  // --- where the conversation is kept ------------------------------------------
+//
+// One file per project, under ~/.gahoole, not in the project. A repo should
+// not gain an untracked database because a session was run in it.
+{
+  const { DB_URL, MODEL } = await import("./agent.js");
+  assert.ok(DB_URL.startsWith("file:"), "a file, not a server");
+  assert.ok(!DB_URL.includes(`file:${process.cwd()}/`), "and not in the project");
+  assert.match(MODEL, /^[a-z]+\//, "provider-qualified, the way the router wants it");
+}
+
+console.log("ok — paths: slug, one directory per project, settings precedence, migration");
 } finally {
   process.chdir(os.tmpdir());
   fs.rmSync(HOME, { recursive: true, force: true });

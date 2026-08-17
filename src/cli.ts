@@ -27,8 +27,8 @@ import {
 import { Spinner } from "./spinner.js";
 import { bindLineOwner } from "./output.js";
 import { LineStream, remainder } from "./stream.js";
-import { createServer, listen } from "./serve.js";
-import { beginTurn, cancelTurn, isInterrupted } from "./interrupt.js";
+import { createServer, listen, serveConfig } from "./serve.js";
+import { beginTurn, escWatcher, isInterrupted } from "./interrupt.js";
 import { chooseSkill } from "./route.js";
 import { extractAttachments } from "./attachments.js";
 import { createSpawnTool, SPAWN_TOOL } from "./subagent.js";
@@ -456,32 +456,10 @@ async function main(): Promise<void> {
     });
   }
 
-  /**
-   * Esc, while a turn is running.
-   *
-   * readline owns stdin at the prompt, and it is idle while a question is in
-   * flight — so the key is watched only for the length of a turn, and raw mode
-   * is handed straight back afterwards. Approval asks through readline
-   * mid-turn, so the watch stands aside for that too, which is what the
-   * pause/resume below already do for the spinner.
-   */
-  let watching = false;
-  const onKey = (buf: Buffer): void => {
-    if (buf.toString() !== "\x1b") return;
-    cancelTurn();
-    spinner.label("stopping");
-  };
-  const watchEsc = (on: boolean): void => {
-    if (!interactive || !stdin.isTTY || on === watching) return;
-    watching = on;
-    if (on) {
-      if (typeof stdin.setRawMode === "function") stdin.setRawMode(true);
-      stdin.on("data", onKey);
-    } else {
-      stdin.off("data", onKey);
-      if (typeof stdin.setRawMode === "function") stdin.setRawMode(false);
-    }
-  };
+  const watchEsc = escWatcher(stdin, {
+    enabled: () => interactive,
+    onCancel: () => spinner.label("stopping"),
+  });
 
   lifecycle
     .on("UserPromptSubmit", () => {
@@ -572,9 +550,7 @@ async function main(): Promise<void> {
   };
 
   // Serving replaces the prompt: the questions come over HTTP instead.
-  const serveIdx = argv.indexOf("--serve");
-  const serving = serveIdx !== -1;
-  const hostIdx = argv.indexOf("--host");
+  const { serving, port: servePort, host: serveHost } = serveConfig(argv);
 
   const interactive = stdin.isTTY && !serving;
   const rl = interactive
@@ -945,10 +921,8 @@ async function main(): Promise<void> {
 
   try {
     if (serving) {
-      const port = Number(argv[serveIdx + 1] ?? process.env.GAHOOLE_PORT ?? 8765);
-      const host =
-        hostIdx === -1 ? (process.env.GAHOOLE_HOST ?? "127.0.0.1") : (argv[hostIdx + 1] ?? "127.0.0.1");
-
+      const port = servePort;
+      const host = serveHost;
       const server = createServer({
         deps: {
           model: info().model,

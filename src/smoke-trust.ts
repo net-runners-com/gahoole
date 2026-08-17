@@ -158,7 +158,17 @@ try {
   assert.ok(lines.every((l) => width(l) <= 24), "CJK counts as two cells");
   assert.ok(lines.length > 1);
 
-  console.log(
+  // Where the record lives: outside the project, so a repo cannot vouch for
+// itself by shipping one.
+{
+  const { trustStorePath } = await import("./trust.js");
+  const at = trustStorePath;
+  assert.ok(path.isAbsolute(at));
+  assert.ok(!at.startsWith(process.cwd() + path.sep), "not inside the project it describes");
+  assert.match(at, /\.gahoole\b/);
+}
+
+console.log(
     `ok — trust: ${trustedPaths().length} recorded, inherited by subdirectories, stored outside the project`,
   );
 } finally {

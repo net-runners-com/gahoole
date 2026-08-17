@@ -108,8 +108,15 @@ try {
     reply = "ok";
   }
 
-  // --- the default is named, so it can be pulled without reading the source -------
+  // --- the defaults are named, so they can be pulled without reading the source ---
   assert.match(ollamaModel(), /^\S+:\S+$/);
+  {
+    const { ollamaHost } = await import("./backends/ollama.js");
+    assert.match(ollamaHost(), /^http:\/\/127\.0\.0\.1:\d+$/, "local, and not a guess at a LAN");
+    process.env.GAHOOLE_OLLAMA_HOST = "http://elsewhere:1";
+    assert.equal(ollamaHost(), "http://elsewhere:1");
+    delete process.env.GAHOOLE_OLLAMA_HOST;
+  }
 
   // --- routing a request to a skill --------------------------------------------
 //

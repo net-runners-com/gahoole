@@ -17,6 +17,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { readConversation } from "./backends/extract.js";
+import {
+  ADD_FILES,
+  COMPOSER,
+  CONVERSATION,
+  SEND,
+  whichMatched,
+} from "./backends/aimode.js";
 
 const CONTAINER = '[data-subtree="aimc"]';
 
@@ -207,7 +214,50 @@ try {
   const again = await read(page1);
   assert.equal(again, t, "reading is not destructive");
 
-  console.log(
+  // --- the selectors nobody promised us ----------------------------------------
+//
+// Every one of these is a guess about someone else's markup, kept as a list
+// so a change to the page falls through to a second choice rather than
+// stopping the program. A malformed one would not fail here — it would fail
+// at the moment a person asked a question — so each is handed to the thing
+// that will have to understand it.
+//
+// That thing is Playwright's locator engine, not the browser: `textarea:visible`
+// is a Playwright pseudo-class and `document.querySelector` refuses it. A test
+// that checked them as CSS would have failed on a selector that works.
+{
+  const lists: [string, string[]][] = [
+    ["composer", COMPOSER],
+    ["send", SEND],
+    ["conversation", CONVERSATION],
+    ["add files", ADD_FILES],
+  ];
+  // The fixtures above left their markup behind.
+  await page.evaluate(() => {
+    (globalThis as unknown as { document: any }).document.body.innerHTML = "";
+  });
+
+  for (const [what, list] of lists) {
+    assert.ok(list.length > 0, `${what} has at least one selector`);
+    assert.equal(new Set(list).size, list.length, `${what} lists none of them twice`);
+    for (const sel of list) {
+      // count() on an empty page is 0, or it throws because the selector is
+      // not one. The number is not the point; being asked is.
+      assert.equal(
+        await page.locator(sel).count(),
+        0,
+        `${what}: ${sel} matched a page with nothing in it`,
+      );
+    }
+  }
+
+  // Which one carried a page is worth knowing: a fallback quietly holding
+  // things up is the warning that the first choice is gone. Nothing has been
+  // matched here, so it is empty rather than wrong.
+  assert.deepEqual(whichMatched(), {}, "nothing matched yet");
+}
+
+console.log(
     `ok — dom: ${t.split("\n").length} lines read, list markers restored, code fenced, noise dropped`,
   );
 } finally {

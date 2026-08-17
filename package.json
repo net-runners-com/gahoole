@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Gahoole \u2014 a local agent with a Claude Code-shaped lifecycle: process, session, turn, tool call.",
+  "description": "Gahoole — a local agent with a Claude Code-shaped lifecycle: process, session, turn, tool call.",
   "scripts": {
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
@@ -28,7 +28,7 @@
     "duel": "tsx src/duel.ts",
     "smoke:ratelimit": "tsx src/smoke-ratelimit.ts",
     "smoke:all": "npm run smoke:offline && npm run smoke:dom",
-    "smoke:offline": "npm run smoke && npm run smoke:protocol && npm run smoke:tui && npm run smoke:paths && npm run smoke:core && npm run smoke:serve && npm run smoke:ollama && npm run smoke:tools && npm run smoke:files && npm run smoke:trust && npm run smoke:profile && npm run smoke:auto && npm run smoke:handoff && npm run smoke:spinner && npm run smoke:ratelimit && npm run smoke:cli",
+    "smoke:offline": "npm run smoke && npm run smoke:protocol && npm run smoke:tui && npm run smoke:paths && npm run smoke:core && npm run smoke:serve && npm run smoke:ollama && npm run smoke:tools && npm run smoke:files && npm run smoke:trust && npm run smoke:profile && npm run smoke:auto && npm run smoke:handoff && npm run smoke:spinner && npm run smoke:ratelimit && npm run smoke:cli && npm run smoke:plugins && npm run smoke:exports",
     "smoke:cli": "tsx src/smoke-cli.ts",
     "canary": "tsx src/canary.ts",
     "ratelimit": "tsx src/ratelimit.ts",
@@ -36,7 +36,9 @@
     "smoke:paths": "tsx src/smoke-paths.ts",
     "smoke:core": "tsx src/smoke-core.ts",
     "smoke:serve": "tsx src/smoke-serve.ts",
-    "smoke:ollama": "tsx src/smoke-ollama.ts"
+    "smoke:ollama": "tsx src/smoke-ollama.ts",
+    "smoke:plugins": "tsx src/smoke-plugins.ts",
+    "smoke:exports": "tsx src/smoke-exports.ts"
   },
   "dependencies": {
     "@mastra/core": "^1.59.0",
