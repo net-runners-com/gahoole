@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import type { Agent } from "@mastra/core/agent";
 import { AiModeBackend, AiModeRateLimitError } from "./aimode.js";
+import { createOllama } from "./ollama.js";
 
 /**
  * A backend turns a prompt into text. Two exist, and they are not equivalent:
@@ -25,11 +26,13 @@ export interface Backend {
   close?(): Promise<void>;
 }
 
-export type BackendKind = "ai-mode" | "api" | "stub" | "replay";
+export type BackendKind = "ai-mode" | "api" | "stub" | "replay" | "ollama";
 
 export function backendKind(): BackendKind {
   const want = process.env.GAHOOLE_BACKEND;
-  return want === "api" || want === "stub" || want === "replay" ? want : "ai-mode";
+  return want === "api" || want === "stub" || want === "replay" || want === "ollama"
+    ? want
+    : "ai-mode";
 }
 
 /**
@@ -143,6 +146,7 @@ export function createBackend(
 ): Backend {
   if (kind === "stub") return createStub();
   if (kind === "replay") return createReplay();
+  if (kind === "ollama") return createOllama();
   if (kind === "ai-mode") {
     return new AiModeBackend({
       headed: process.env.GAHOOLE_HEADED === "1",
@@ -165,3 +169,4 @@ export function createBackend(
 
 export { AiModeBackend } from "./aimode.js";
 export { AiModeRateLimitError, AiModeRefusedError } from "./aimode.js";
+export { createOllama, ollamaModel, ollamaReady } from "./ollama.js";

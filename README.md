@@ -355,6 +355,34 @@ The model is pluggable, and the two options are not equivalent.
 | Tool calling | **no** | yes |
 | Rate limit | ~98 queries per profile, *silent* | 429 with `retry-after` |
 
+### A local model for the turns that do not need the good one
+
+The binding constraint is not quality, it is the rate limit: a fresh profile
+is worth about 98 queries and a benchmark run spends thirty of them. Some of
+that goes on work no frontier model is needed for — condensing a session into
+notes, summarizing a transcript for the handoff.
+
+With Ollama running, those turns go there instead:
+
+```bash
+ollama pull qwen3:4b            # 2.5 GB
+gahoole                         # summaries run locally, queries are saved
+```
+
+`GAHOOLE_OLLAMA_MODEL` picks another; `GAHOOLE_LOCAL_SUMMARY=0` keeps
+everything on the main backend. If nothing is listening, or the model is not
+pulled, it says so once and carries on as before — this is an optimisation,
+not a dependency.
+
+It also matters that a local model has no rate limit to hit. The handoff
+exists for the case where the browser has stopped answering, and summarizing
+*that* through the browser is asking the thing that just failed to do one more
+thing.
+
+Deliberately not the main backend. Driving tools well is the hard part, the
+local models that do it are large, and the ones that fit in a couple of
+gigabytes are good enough to summarize and not to act.
+
 ### What the rate limit actually is
 
 Measured with `npm run ratelimit`, which spends the limit on purpose:

@@ -28,14 +28,15 @@
     "duel": "tsx src/duel.ts",
     "smoke:ratelimit": "tsx src/smoke-ratelimit.ts",
     "smoke:all": "npm run smoke:offline && npm run smoke:dom",
-    "smoke:offline": "npm run smoke && npm run smoke:protocol && npm run smoke:tui && npm run smoke:paths && npm run smoke:core && npm run smoke:serve && npm run smoke:tools && npm run smoke:files && npm run smoke:trust && npm run smoke:profile && npm run smoke:auto && npm run smoke:handoff && npm run smoke:spinner && npm run smoke:ratelimit && npm run smoke:cli",
+    "smoke:offline": "npm run smoke && npm run smoke:protocol && npm run smoke:tui && npm run smoke:paths && npm run smoke:core && npm run smoke:serve && npm run smoke:ollama && npm run smoke:tools && npm run smoke:files && npm run smoke:trust && npm run smoke:profile && npm run smoke:auto && npm run smoke:handoff && npm run smoke:spinner && npm run smoke:ratelimit && npm run smoke:cli",
     "smoke:cli": "tsx src/smoke-cli.ts",
     "canary": "tsx src/canary.ts",
     "ratelimit": "tsx src/ratelimit.ts",
     "compare": "tsx src/compare.ts",
     "smoke:paths": "tsx src/smoke-paths.ts",
     "smoke:core": "tsx src/smoke-core.ts",
-    "smoke:serve": "tsx src/smoke-serve.ts"
+    "smoke:serve": "tsx src/smoke-serve.ts",
+    "smoke:ollama": "tsx src/smoke-ollama.ts"
   },
   "dependencies": {
     "@mastra/core": "^1.59.0",

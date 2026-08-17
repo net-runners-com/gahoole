@@ -118,6 +118,8 @@ environment
   GAHOOLE_RECORD      append every exchange to this file
   GAHOOLE_BACKEND     ai-mode (default), api, stub, replay
   GAHOOLE_REPLAY      the recording to answer from
+  GAHOOLE_OLLAMA_MODEL  default qwen3:4b, used for summaries when running
+  GAHOOLE_LOCAL_SUMMARY 0 to keep summaries on the main backend
   GAHOOLE_HOME        default ~/.gahoole
   GAHOOLE_DIR         default ~/.gahoole/projects/<this project>
   GAHOOLE_DB_URL      default <that directory>/gahoole.db
