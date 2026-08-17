@@ -17,8 +17,18 @@ export function readConversation(sel: string): string {
 
       const d = (globalThis as unknown as { document: any }).document;
       const roots = d.querySelectorAll(sel);
+      // No container, no conversation.
+      //
+      // This used to fall back to reading the whole body, on the theory that
+      // something was better than nothing. What it read was the page: the
+      // skip-to-content link, the composer holding the question that had just
+      // been typed into it, and the chrome around both — which is where "the
+      // whole preamble printed above the answer" came from, intermittently,
+      // whenever a poll landed before the answer container existed. An empty
+      // read is handled properly a layer up: settle keeps waiting, and a read
+      // that never fills is retried once.
       const parts: string[] = [];
-      for (const root of roots.length ? roots : [d.body]) {
+      for (const root of roots) {
         const noise = root.querySelectorAll(
           ".HvurC,[role=dialog],[role=navigation],a[href],textarea,button",
         );

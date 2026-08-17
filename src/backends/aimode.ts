@@ -244,6 +244,21 @@ const CHROME = [
  * the page put in front of it goes as well.
  */
 function dropQuestion(answer: string, asked?: string): string {
+  return afterQuestion(answer, asked) ?? answer;
+}
+
+/**
+ * The part after the echoed question, or `undefined` while the question is
+ * still arriving.
+ *
+ * The distinction matters only to the streaming path. The page renders the
+ * question first and progressively, so early polls hold half a preamble and
+ * no answer — and a reader that cannot find the end of the question is not
+ * looking at an answer yet. Told that as "nothing to cut" it streamed the
+ * preamble to the terminal, which is how this survived being fixed twice: the
+ * finished answer went through the other branch and looked right.
+ */
+function afterQuestion(answer: string, asked?: string): string | undefined {
   if (!asked) return answer;
   const flat = (s: string) => s.replace(/\s+/g, " ").trim();
   // The tail of the question is enough to find it, and short enough to still
@@ -262,8 +277,9 @@ function dropQuestion(answer: string, asked?: string): string {
   const from = haystack.indexOf(opening);
   if (from === -1 || from > 300) return answer;
 
+  // The echo has started but not finished: there is no answer here yet.
   const at = haystack.indexOf(needle, from);
-  if (at === -1) return answer;
+  if (at === -1) return undefined;
 
   // Walk the original text until as many non-space characters have gone by as
   // the flattened prefix holds — the two differ only in whitespace.
@@ -271,13 +287,7 @@ function dropQuestion(answer: string, asked?: string): string {
   let seen = 0;
   for (let i = 0; i < answer.length; i++) {
     if (!/\s/.test(answer[i]!)) seen++;
-    if (seen >= skip) {
-      const rest = answer.slice(i + 1).trim();
-      // Removing the question must never remove the answer with it. If there
-      // is nothing left, the match was wrong about where the question ended
-      // and the whole text is the better guess.
-      return rest || answer;
-    }
+    if (seen >= skip) return answer.slice(i + 1).trim();
   }
   return answer;
 }
@@ -436,7 +446,7 @@ export class AiModeBackend {
    * of three, on the two benchmark questions whose answers Google renders as
    * math, which are the slowest to appear.
    */
-  async #settle(quietMs = 1200): Promise<void> {
+  async #settle(quietMs = 1200, asked?: string): Promise<void> {
     const page = await this.#ensure();
     const deadline = Date.now() + (this.opts.timeoutMs ?? 90_000);
     let last = -1;
@@ -448,7 +458,12 @@ export class AiModeBackend {
         // Only the part that is new this turn, and only when someone asked.
         if (onPartial && len > this.#seen.length) {
           const fresh = all.startsWith(this.#seen) ? all.slice(this.#seen.length) : all;
-          onPartial(stripChrome(fresh));
+          // Nothing is streamed until the question has finished echoing.
+          // Without this the terminal got the preamble a line at a time while
+          // a pipe, which does not stream, printed a clean answer — which is
+          // how this survived being fixed twice.
+          const part = afterQuestion(fresh, asked);
+          if (part !== undefined) onPartial(stripChrome(part));
         }
         last = len;
         lastChange = Date.now();
@@ -531,7 +546,7 @@ export class AiModeBackend {
         ),
       );
       this.#started = true;
-      await phase("settle", () => this.#settle());
+      await phase("settle", () => this.#settle(1200, prompt));
       return phase("read", () => this.#read(prompt));
     }
 
@@ -581,7 +596,7 @@ export class AiModeBackend {
       }
     });
     await phase("first token", () => this.#waitForGrowth(before));
-    await phase("settle", () => this.#settle());
+    await phase("settle", () => this.#settle(1200, text));
     return phase("read", () => this.#read(text));
   }
 

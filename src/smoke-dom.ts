@@ -123,6 +123,17 @@ try {
   // that had stopped, and the turn failed with "AI Mode returned nothing".
   assert.equal(await read(empty), "", "nothing rendered yet reads as nothing");
 
+  // And a page with no conversation container at all is nothing, rather than
+  // the whole document. Reading the body was the fallback, and what it read
+  // was the skip link, the composer holding the question that had just been
+  // typed, and the chrome around them — printed above the answer whenever a
+  // poll landed before the container existed.
+  const noContainer = `
+    <a href="#main">メイン コンテンツにスキップ</a>
+    <div>AI モードの会話: You are running inside a program that can execute tools</div>
+    <textarea>おはよう</textarea>`;
+  assert.equal(await read(noContainer), "", "no container, no conversation");
+
   // --- a nested list does not renumber its parent -----------------------------
   const deep = await read(nested);
   assert.match(deep, /^1\. 外側のひとつめ/m);
