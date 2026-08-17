@@ -1,4 +1,5 @@
 import { log } from "./output.js";
+import { beginDriving, endDriving } from "./driving.js";
 import {
   parsePlan,
   readOutcome,
@@ -151,6 +152,15 @@ export async function runAutonomously(
   goal: string,
   deps: AutoDeps,
 ): Promise<AutoResult> {
+  beginDriving();
+  try {
+    return await drive(goal, deps);
+  } finally {
+    endDriving();
+  }
+}
+
+async function drive(goal: string, deps: AutoDeps): Promise<AutoResult> {
   const maxSteps = deps.maxSteps ?? 8;
 
   const planText = await deps.run(PLAN_PROMPT(goal));

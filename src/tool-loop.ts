@@ -3,6 +3,7 @@ import type { Lifecycle } from "./lifecycle.js";
 import { createToolHooks } from "./agent.js";
 import { log } from "./output.js";
 import { stopHere } from "./interrupt.js";
+import { beingDriven } from "./driving.js";
 import type { Profile } from "./profiles.js";
 import { COMPOSER_MAX } from "./backends/aimode.js";
 import {
@@ -309,7 +310,11 @@ export class ToolLoop implements Backend {
         // it was supposed to write, and stops — measured on a plugin skill,
         // which read reference.md and then set out the spec as prose. What
         // matters is whether anything *changed*, not whether anything ran.
-        if (!nudged && !changed && (claimsWork(answer) || needsAction(prompt))) {
+        // Not when a loop above is going to ask again on the next turn. Inside
+        // an autonomous run this nudge says what the run's own step prompt is
+        // about to say — measured at three of nineteen queries in one run and
+        // four of twenty-one in another, a fifth of the budget spent twice.
+        if (!nudged && !changed && !beingDriven() && (claimsWork(answer) || needsAction(prompt))) {
           nudged = true;
           this.#queries++;
           answer = await this.inner.ask(

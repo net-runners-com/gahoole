@@ -535,6 +535,53 @@ const tools = {
   assert.equal(stub.prompts.length, 2, "no follow-up was needed");
 }
 
+// --- the nudge stands down when a loop above will ask again ----------------
+//
+// Inside an autonomous run it says what the run's own step prompt is about to
+// say. Measured: three of nineteen queries in one run and four of twenty-one
+// in another, a fifth of the budget spent twice.
+{
+  const { beginDriving, endDriving, beingDriven } = await import("./driving.js");
+  assert.equal(beingDriven(), false);
+
+  const script = () =>
+    new StubBackend([
+      'TOOL_CALL: {"tool":"read_file","input":{"path":"a.txt"}}',
+      "読みました。次に進みます。",
+      "やりました。",
+    ]);
+
+  // On its own, a turn that only read and then talked is nudged.
+  {
+    const stub = script();
+    const loop = new ToolLoop(stub, tools, lifecycle);
+    loop.reset();
+    await inTurn(() => loop.ask("ファイルを作って"));
+    assert.ok(
+      stub.prompts.some((p) => p.includes("nothing actually happened")),
+      "nudged when nobody else will ask",
+    );
+  }
+
+  // Driven, it is not — and the query is not spent.
+  {
+    const stub = script();
+    const loop = new ToolLoop(stub, tools, lifecycle);
+    loop.reset();
+    beginDriving();
+    try {
+      await inTurn(() => loop.ask("ファイルを作って"));
+    } finally {
+      endDriving();
+    }
+    assert.ok(
+      !stub.prompts.some((p) => p.includes("nothing actually happened")),
+      "the run's own loop will ask",
+    );
+    assert.equal(beingDriven(), false, "and the flag does not leak");
+  }
+}
+
 console.log(
   `ok — tool protocol: ${describeTool("read_file", tools.read_file).params.join(",")} parsed, denied, bounded`,
 );
