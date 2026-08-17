@@ -263,6 +263,70 @@ export const onAiModeRelaunch = (fn: (why: string) => void): (() => void) =>
 const empty = notifier<[]>("empty");
 export const onAiModeEmpty = (fn: () => void): (() => void) => empty.add(fn);
 
+/**
+ * What to do about a question that did not come back.
+ *
+ * Stated as a function so it can be read, and tested, without a browser. It
+ * used to be a run of `if` blocks inside the catch, and the only way to check
+ * any of it was to make Google fail on purpose.
+ *
+ * `retry` asks again down the same profile; `rotate` throws the profile away
+ * first; `relaunch` starts the browser again; `give up` rethrows.
+ */
+export type Recovery =
+  | { do: "retry"; waitMs?: number }
+  | { do: "rotate"; waitMs?: number }
+  | { do: "relaunch"; waitMs?: number }
+  | { do: "give up"; waitMs?: number };
+
+export interface Attempts {
+  /** Empty answers so far for this question. */
+  empties: number;
+  refused: boolean;
+  relaunched: boolean;
+  rotations: number;
+  maxRotations: number;
+  /** How long to wait when rotating has stopped helping. */
+  waitMs: number;
+}
+
+export function recoveryFor(e: unknown, seen: Attempts): Recovery {
+  // A declined query, asked again once. It is a search engine deciding it has
+  // nothing for this search, and it is not deterministic — the same question a
+  // moment later is usually answered. One refusal killed a whole benchmark
+  // task because nothing retried it.
+  if (e instanceof AiModeRefusedError) {
+    return seen.refused ? { do: "give up" } : { do: "retry", waitMs: 1200 };
+  }
+
+  // An empty container, twice, and the second time somewhere else. The first
+  // retry is a fresh navigation in the same profile, because whatever left the
+  // container empty is usually in the page. When that comes back empty too the
+  // profile is the suspect: an exhausted one answers by not answering, which
+  // is indistinguishable from this until a fresh one answers normally. Two
+  // runs died here at 224 seconds each with nothing to show for it.
+  if (e instanceof EmptyAnswerError) {
+    if (seen.empties === 0) return { do: "retry" };
+    if (seen.empties === 1) return { do: "rotate" };
+    return { do: "give up" };
+  }
+
+  // A dead browser is not a refused answer. Relaunching costs one query and
+  // gets the turn back; without it a crashed renderer ended the session and
+  // the conversation went to the handoff for no reason. Once only — a crash
+  // that repeats is a crash worth seeing.
+  if (looksLikeCrash(e)) {
+    return seen.relaunched ? { do: "give up" } : { do: "relaunch" };
+  }
+
+  if (!(e instanceof AiModeRateLimitError)) return { do: "give up" };
+  if (seen.rotations >= seen.maxRotations) return { do: "give up" };
+  // Later rotations wait as well: if several fresh cookies in a row are
+  // refused, the limit is not cookie-shaped and spinning through profiles only
+  // makes more of them.
+  return seen.rotations + 1 > 2 ? { do: "rotate", waitMs: seen.waitMs } : { do: "rotate" };
+}
+
 export class AiModeRateLimitError extends Error {
   /** Shaped so `classifyFailure` reads it the same way it reads a 429. */
   readonly status = 429;
@@ -780,71 +844,50 @@ export class AiModeBackend {
           attachments,
         );
         this.#remember(prompt, answer);
-        this.#retriedEmpty = false;
+        this.#empties = 0;
         record(prompt, answer);
         return answer;
       } catch (e) {
-        // A dead browser is not a refused answer. Relaunching costs one query
-        // and gets the turn back; without it a crashed renderer ended the
-        // session and the conversation went to the handoff for no reason.
-        // Once only — a crash that repeats is a crash worth seeing.
-        // An empty page is worth asking again for, once. The retry starts a
-        // fresh navigation rather than continuing the thread, because whatever
-        // state left the container empty is in the page.
-        // A declined query, asked again once. It is a search engine deciding
-        // it has nothing for this search, and it is not deterministic — the
-        // same question a moment later is usually answered. Measured, one
-        // refusal killed a whole benchmark task because nothing retried it.
-        if (e instanceof AiModeRefusedError && !this.#retriedRefusal) {
-          this.#retriedRefusal = true;
-          empty.emit();
-          this.#started = false;
-          this.#seen = "";
-          await sleep(1200);
-          continue;
-        }
+        const step = recoveryFor(e, {
+          empties: this.#empties,
+          refused: this.#retriedRefusal,
+          relaunched: this.#relaunched,
+          rotations: this.#rotations,
+          maxRotations,
+          waitMs,
+        });
+        if (step.do === "give up") throw e;
 
-        if (e instanceof EmptyAnswerError && !this.#retriedEmpty) {
-          this.#retriedEmpty = true;
-          empty.emit();
-          this.#started = false;
-          this.#seen = "";
-          continue;
-        }
-
-        if (looksLikeCrash(e) && !this.#relaunched) {
+        // Tell whoever is waiting, in the words that fit what happened.
+        if (e instanceof AiModeRefusedError) this.#retriedRefusal = true;
+        if (e instanceof EmptyAnswerError) this.#empties++;
+        if (e instanceof AiModeRefusedError || e instanceof EmptyAnswerError) empty.emit();
+        if (step.do === "relaunch") {
           this.#relaunched = true;
           relaunch.emit(e instanceof Error ? e.message : String(e));
-          await this.close().catch(() => {});
-          this.#started = false;
-          this.#seen = "";
-          continue;
+        }
+        if (step.do === "rotate" && e instanceof AiModeRateLimitError) {
+          this.#rotations++;
+          rateLimit.emit(this.#rotations, this.#rotations <= maxRotations);
         }
 
-        if (!(e instanceof AiModeRateLimitError)) throw e;
-        if (this.#rotations >= maxRotations) throw e;
+        if (step.do === "rotate" || step.do === "relaunch") {
+          await this.close().catch(() => {});
+        }
+        if (step.do === "rotate") this.#profile++;
 
-        this.#rotations++;
-        const rotating = this.#rotations <= maxRotations;
-        rateLimit.emit(this.#rotations, rotating);
-
-        await this.close();
-        this.#profile++;
         this.#started = false;
         this.#seen = "";
-
-        // Later rotations wait as well: if several fresh cookies in a row are
-        // refused, the limit is not cookie-shaped and spinning through
-        // profiles only makes more of them.
-        if (this.#rotations > 2) await sleep(waitMs);
+        if (step.waitMs) await sleep(step.waitMs);
       }
     }
   }
 
+  /** Empty answers so far this question; reset once a turn succeeds. */
+  #empties = 0;
+
   /** One relaunch per session; see the catch in `ask`. */
   #relaunched = false;
-  /** One retry per turn for an empty page; reset once a turn succeeds. */
-  #retriedEmpty = false;
   /** One retry per turn for a declined query; see the catch in `ask`. */
   #retriedRefusal = false;
 
