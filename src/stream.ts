@@ -107,9 +107,23 @@ export class LineStream {
  * which is right whether the two agree or not.
  */
 export function remainder(answer: string, shown: string[]): string {
-  const seen = new Set(shown.map((l) => l.trim()).filter(Boolean));
-  const kept = answer
-    .split("\n")
-    .filter((l) => !seen.has(l.trim()) || !l.trim());
+  // Matched in order, one for one — not as a set of strings.
+  //
+  // A set has no idea where a line was. An answer that repeats a line that
+  // has already been shown — a blank line, a bullet, a closing brace — lost
+  // every later copy of it, including the ones still to be printed. Found in
+  // review by something that had never seen this file: `remainder("a\nb\na",
+  // ["a"])` gave back "b".
+  const queue = shown.map((l) => l.trim()).filter(Boolean);
+  let next = 0;
+  const kept: string[] = [];
+  for (const line of answer.split("\n")) {
+    const text = line.trim();
+    if (text && next < queue.length && queue[next] === text) {
+      next++;
+      continue;
+    }
+    kept.push(line);
+  }
   return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }

@@ -395,6 +395,7 @@ The names are the constraint, not decoration.
 | `athena` | 均衡 | wisdom, and the owl this program is named after — good at both counsel and craft | every tool · 4 rounds |
 | `pythia` | 推論 | the oracle at Delphi: she answers and does nothing else | **no tools** · 1 round |
 | `daedalus` | 実装 | the craftsman who built the labyrinth and the wings, and found out which of them flew | every tool · 8 rounds |
+| `themis` | 審査 | the goddess of judgement: a stranger to the project, given none of its story | **read-only, sealed** · 8 rounds |
 | `argus` | 調査 | Panoptes, the hundred-eyed watchman — all eyes, no hands | **read-only** · 6 rounds |
 
 ```
@@ -404,8 +405,20 @@ gahoole --profile argus         start in one
 GAHOOLE_PROFILE=pythia gahoole
 ```
 
-The plain names (`general`, `reason`, `build`, `research`) still resolve, so
-nothing written before the rename has to be retrained.
+The plain names (`general`, `reason`, `build`, `research`, `review`) still
+resolve, so nothing written before the rename has to be retrained.
+
+`themis` is **sealed**: no notes from earlier sessions, no `GAHOOLE.md`, no
+handoff, and not the current conversation either — switching to it opens a new
+session, because context cannot be taken back out of one. What a reviewer is
+worth is exactly that it does not already believe what everyone involved
+believes, and that is only true if nothing was carried in.
+
+It earned its place on the first run. Asked to look at `src/stream.ts`, it
+found that `remainder()` matched shown lines as a *set* of strings, so an
+answer repeating a line that had already been printed — a blank line, a
+bullet, a closing brace — lost every later copy of it. That was a real bug, in
+a file its author had read a dozen times.
 
 The tool set is the half that does the work. A brief saying "do not write
 files" is a suggestion; a tool list with no `write_file` in it is not — so

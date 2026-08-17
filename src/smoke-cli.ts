@@ -363,5 +363,52 @@ function run(
   }
 }
 
+// --- the reviewer starts with nothing ---------------------------------------
+//
+// Its worth is that it does not already believe what everyone involved
+// believes, which is only true if nothing was carried in. Checked at startup
+// and on the switch, because context cannot be taken back out of a session.
+{
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "gahoole-cli-"));
+  const work = path.join(home, "project");
+  fs.mkdirSync(work, { recursive: true });
+  fs.writeFileSync(path.join(work, "GAHOOLE.md"), "このプロジェクトについて\n\n出力は日本語で。");
+
+  try {
+    // Ordinarily the instructions are read and announced.
+    const normal = await run(["/exit"], { home, keep: true });
+    assert.match(
+      normal.stdout,
+      /GAHOOLE\.md · \d+ lines/,
+      `read by default:\n${normal.stdout}`,
+    );
+
+    // Started as the reviewer, they are not.
+    const sealed = await run(["/exit"], {
+      home,
+      keep: true,
+      args: ["--profile", "themis"],
+    });
+    assert.ok(
+      !/GAHOOLE\.md · \d+ lines/.test(sealed.stdout),
+      `and not by themis:\n${sealed.stdout}`,
+    );
+    assert.match(sealed.stdout, /nothing carried in/, "and it says so");
+
+    // Switching to it mid-session opens a new one, since the old one already
+    // has the context in it.
+    const switched = await run(["/id", "/profile themis", "/id", "/exit"], {
+      home,
+      keep: true,
+    });
+    const ids = [...switched.stdout.matchAll(/^[0-9a-f-]{36}$/gm)].map((m) => m[0]);
+    assert.equal(ids.length, 2, `two ids printed:\n${switched.stdout}`);
+    assert.notEqual(ids[0], ids[1], "a different session");
+    assert.match(switched.stdout, /nothing carried in/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
 console.log("ok — cli: answers, commands, profiles, approval, sessions, trust");
 process.exit(0);

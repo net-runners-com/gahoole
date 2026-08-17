@@ -654,6 +654,17 @@ assert.equal(parsePlan(Array.from({ length: 40 }, (_, i) => `${i}. step number $
   // What is left to print is what was not shown, whether or not the final
   // answer agrees with what was streamed.
   assert.equal(remainder("a\nb\nc", ["a", "b"]), "c");
+  // Matched in order, one for one. A set of strings has no idea where a line
+  // was, so an answer repeating a line already shown — a blank line, a
+  // bullet, a closing brace — lost every later copy of it, printed or not.
+  assert.equal(remainder("a\nb\na", ["a"]), "b\na", "the second one is still to come");
+  assert.equal(remainder("}\nfoo\n}", ["}"]), "foo\n}");
+  assert.equal(remainder("- x\n- y\n- x", ["- x"]), "- y\n- x");
+  assert.equal(
+    remainder("一行目\n二行目\n一行目", ["一行目", "二行目"]),
+    "一行目",
+    "and the ones that were shown go, in the order they went",
+  );
   assert.equal(remainder("a\nb", ["a", "b"]), "", "nothing left is nothing printed");
   assert.equal(remainder("a\nb", []), "a\nb", "and nothing streamed leaves it all");
   assert.equal(

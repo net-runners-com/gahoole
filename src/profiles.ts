@@ -54,6 +54,12 @@ export interface Profile {
   rounds: number;
   /** Default ceiling for an autonomous run under this profile. */
   steps: number;
+  /**
+   * Nothing is carried in: no notes from earlier sessions, no GAHOOLE.md, no
+   * handoff, and not this conversation either. Switching to a sealed profile
+   * opens a new session, because context cannot be taken back out of one.
+   */
+  sealed?: boolean;
 }
 
 /** Everything that changes a file, runs a program, or deletes something. */
@@ -116,6 +122,35 @@ export const PROFILES: Profile[] = [
     tools: "all",
     rounds: 8,
     steps: 100,
+  },
+  {
+    name: "themis",
+    aliases: ["review", "judge"],
+    summary: "審査 — a stranger to this project; reads the work, not the story",
+    brief: [
+      "You are reviewing work you have never seen before, for someone who has",
+      "not told you anything about it. Nothing has been carried in: no notes",
+      "from earlier sessions, no project instructions, no history. That is",
+      "deliberate. What you are worth here is exactly that you do not already",
+      "believe what everyone involved believes.",
+      "",
+      "So judge the thing in front of you and not the account of it. Read the",
+      "code, the tests and the documents; where they disagree, the code is what",
+      "is true and the disagreement is itself a finding. A comment claiming a",
+      "measurement, a README describing a feature, a test named for something",
+      "it does not check — go and look.",
+      "",
+      "Say what is wrong before what is good, be specific enough that someone",
+      "can act on it — file and line — and separate what you verified from what",
+      "you suspect. If you did not check something that matters, say which.",
+      "Do not soften a finding to be agreeable, and do not invent one to seem",
+      "thorough.",
+    ].join("\n"),
+    hint: "[You are a stranger to this project. Judge what is in the files, cite file:line, and say what you did not check.]",
+    tools: { deny: WRITES },
+    rounds: 8,
+    steps: 40,
+    sealed: true,
   },
   {
     name: "argus",

@@ -261,6 +261,13 @@ async function main(): Promise<void> {
       : undefined;
   // Skills are worth a line in the reminder, not only in the preamble; see
   // the note on skillsHint.
+  if (profile.sealed) {
+    console.log(
+      `${DIM}${profile.name} · nothing carried in: no notes, no GAHOOLE.md, ` +
+        `no handoff${RESET}`,
+    );
+  }
+
   const hint = skillsHint(plugins);
   if (hint) profile = { ...profile, hint: [profile.hint, hint].filter(Boolean).join(" ") };
   loop?.use(profile, toolsFor(profile, allTools));
@@ -317,7 +324,7 @@ async function main(): Promise<void> {
   // Seeded rather than prepended to each prompt — the tool preamble already
   // rides on every question and the wording of it is fragile.
   {
-    const instructions = projectInstructions();
+    const instructions = profile.sealed ? "" : projectInstructions();
     if (instructions) {
       await session.seedContext(
         `Instructions for this project, from GAHOOLE.md:\n\n${instructions}`,
@@ -331,7 +338,7 @@ async function main(): Promise<void> {
   // What earlier sessions established, whether or not one of them was cut
   // short. A handoff is the interrupted case; this is the ordinary one.
   {
-    const earlier = notes.recent(20);
+    const earlier = profile.sealed ? [] : notes.recent(20);
     if (earlier.length && !startId) {
       await session.seedContext(seedFrom(earlier));
       console.log(
@@ -341,7 +348,9 @@ async function main(): Promise<void> {
     }
   }
 
-  const pending = startId ? undefined : handoffs.read();
+  // A sealed profile is given nothing to go on, the interrupted conversation
+  // included; see the note on Profile.sealed.
+  const pending = startId || profile.sealed ? undefined : handoffs.read();
   if (pending) {
     handoffs.take();
     await session.seedContext(HandoffStore.seedText(pending));
@@ -621,6 +630,15 @@ async function main(): Promise<void> {
               if (!loop) {
                 console.log("  profiles only apply to the ai-mode backend");
                 break;
+              }
+              // Context cannot be taken back out of a conversation, so a
+              // sealed profile gets a new one. Switching away does not undo
+              // it — the reviewer's session simply continues, unseeded.
+              if (next.sealed) {
+                session = await session.clear();
+                console.log(
+                  `${DIM}  new session ${session.id.slice(0, 8)} · nothing carried in${RESET}`,
+                );
               }
               profile = next;
               const active = toolsFor(profile, allTools);

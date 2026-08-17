@@ -35,13 +35,14 @@ const p = (name: string) => {
 
 // --- the catalogue ----------------------------------------------------------
 assert.ok(findProfile(DEFAULT_PROFILE), "the default profile is one of them");
-assert.deepEqual(profileNames(), ["athena", "pythia", "daedalus", "argus"]);
+assert.deepEqual(profileNames(), ["athena", "pythia", "daedalus", "themis", "argus"]);
 // The plain names still resolve, so a script written before the rename works.
 for (const [plain, mythic] of [
   ["general", "athena"],
   ["reason", "pythia"],
   ["build", "daedalus"],
   ["research", "argus"],
+  ["review", "themis"],
 ]) {
   assert.equal(findProfile(plain!)?.name, mythic, `${plain} still finds ${mythic}`);
 }
@@ -134,6 +135,32 @@ for (const kept of ["read_file", "list_files", "search_files"]) {
     "the new brief is sent on the next question",
   );
   assert.equal(Object.keys(loop.tools).length, Object.keys(argus).length);
+}
+
+// --- the reviewer is given nothing to go on --------------------------------
+//
+// What it is worth is exactly that it does not already believe what everyone
+// involved believes, and that is only true if nothing was carried in.
+{
+  const themis = p("themis");
+  assert.equal(themis.sealed, true);
+  assert.equal(
+    PROFILES.filter((x) => x.sealed).length,
+    1,
+    "and it is the only one — the rest keep their context",
+  );
+
+  // A reviewer reads; it does not rewrite the thing it is judging.
+  const offered = toolsFor(themis, all);
+  for (const denied of ["write_file", "edit_file", "delete_file", "run_command"]) {
+    assert.ok(!(denied in offered), `themis cannot ${denied}`);
+  }
+  assert.ok("read_file" in offered && "search_files" in offered);
+
+  // The brief has to say what makes the judgement worth having.
+  assert.match(themis.brief, /never seen before/);
+  assert.match(themis.brief, /the code is what\s+is true/);
+  assert.match(themis.hint, /did not check/);
 }
 
 console.log(
