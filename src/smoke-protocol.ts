@@ -700,6 +700,28 @@ assert.equal(parsePlan(Array.from({ length: 40 }, (_, i) => `${i}. step number $
   // blank when this and the chrome trimmer both cut from the same place.
   assert.equal(dropQuestionForTest("2+2 は？", "2+2 は？"), "2+2 は？");
 
+  // A long question is still cut off. The tool preamble is over four thousand
+  // characters, and a version of this that capped where the echo could end
+  // let exactly that case through — the whole thing was printed above the
+  // answer, twice.
+  {
+    const long = [
+      "You are running inside a program that can execute tools for you.",
+      "x".repeat(4500),
+      "おはよう",
+    ].join("\n");
+    const page = `メイン コンテンツにスキップ\nAI モードの会話: ${long.replace(/\n/g, " ")}\nおはようございます！`;
+    assert.equal(dropQuestionForTest(page, long), "おはようございます！");
+  }
+
+  // ...but a question that turns up below the answer is not, because cutting
+  // to it would take the answer with it.
+  {
+    const q = "これは十分に長い質問文です、末尾まで一致させるために";
+    const page = `答えです。\n${"y".repeat(400)}\n${q}`;
+    assert.match(dropQuestionForTest(page, q), /^答えです。/);
+  }
+
   // An answer that never echoed the question is left alone.
   assert.equal(dropQuestionForTest("ふつうの答え。", asked), "ふつうの答え。");
   assert.equal(dropQuestionForTest("答え", undefined), "答え");

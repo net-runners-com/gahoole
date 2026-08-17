@@ -252,14 +252,18 @@ function dropQuestion(answer: string, asked?: string): string {
   if (needle.length < 20) return answer;
 
   const haystack = flat(answer);
-  const at = haystack.indexOf(needle);
-  if (at === -1) return answer;
 
-  // Only when the echo is at the front, which is the case this was written
-  // for. Cutting to wherever the question happens to appear removes the
-  // answer whenever the page puts the question below it, and an answer
-  // removed is worse than a preamble shown.
-  if (at + needle.length > 4000) return answer;
+  // The echo has to *start* near the front, which is the case this was written
+  // for: the page renders the question above the answer, behind a little
+  // chrome. Judged on where it starts rather than where it ends — an earlier
+  // version capped the end position instead, and a preamble of four and a half
+  // thousand characters sailed past the cap and was printed in full, twice.
+  const opening = flat(asked).slice(0, 60);
+  const from = haystack.indexOf(opening);
+  if (from === -1 || from > 300) return answer;
+
+  const at = haystack.indexOf(needle, from);
+  if (at === -1) return answer;
 
   // Walk the original text until as many non-space characters have gone by as
   // the flattened prefix holds — the two differ only in whitespace.
