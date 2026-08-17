@@ -399,6 +399,20 @@ try {
     });
 
   assert.match((await asks("read_file", at))?.deny ?? "", /outside the project/);
+
+  // A path on another drive is outside too. `path.relative` between two of
+  // them returns the second whole, with no leading `..` to notice — so this
+  // only means anything where drives exist, and the Windows job in CI is what
+  // checks it. On POSIX the same string is a legal filename inside the
+  // project, and denying it would be the wrong answer.
+  if (path.sep === "\\") {
+    const other = process.cwd().startsWith("C:") ? "D:" : "C:";
+    assert.match(
+      (await asks("read_file", `${other}\\Windows\\System32\\config\\SAM`))?.deny ?? "",
+      /outside the project/,
+      "an absolute path from another root does not read as inside",
+    );
+  }
   allowReadOutsideRoot(outside);
   assert.equal((await asks("read_file", at))?.deny, undefined);
   assert.match(

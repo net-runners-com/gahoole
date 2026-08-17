@@ -54,10 +54,23 @@ const UNDELETABLE = [
 
 const MAX_WRITE = 500_000;
 
+/**
+ * Where this is, relative to the project — or `..` when it is not in it.
+ *
+ * The caller reads a leading `..` as "outside", and on Windows there is a way
+ * out that does not produce one: `path.relative` between two drives returns
+ * the second path whole, so a file on C: with the project on D: came back as
+ * `C:/Users/...`, which begins with neither a dot nor a slash and was treated
+ * as being inside. Found by running the tests on Windows for the first time.
+ * `tools.ts` refused it anyway, which is why it was a hole and not a breach,
+ * but this is the layer that is supposed to say no.
+ */
 function relativize(p: unknown): string | undefined {
   if (typeof p !== "string" || !p) return undefined;
   const abs = path.resolve(ROOT, p);
-  return path.relative(ROOT, abs).split(path.sep).join("/");
+  const rel = path.relative(ROOT, abs).split(path.sep).join("/");
+  if (path.isAbsolute(rel) || rel.startsWith("/")) return "..";
+  return rel;
 }
 
 /** Set by the CLI once plugins are loaded; see the note in tools.ts. */
