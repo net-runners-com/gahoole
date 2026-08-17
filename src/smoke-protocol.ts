@@ -321,6 +321,27 @@ assert.equal(
   );
 }
 
+// The same step written twice is one step. A measured run came back with
+// twelve items of which four were two pairs — the model restated the opening
+// steps at the end — and a plan that lists a step twice is walked twice.
+{
+  const tasks = parsePlan(
+    [
+      "1. Read reference.md to understand the specification",
+      "2. Read the top lines of sales.csv",
+      "3. Create the spec file",
+      "4. read reference.md   to understand the specification",
+      "5. Read the top lines of sales.csv",
+    ].join("\n"),
+  );
+  assert.equal(tasks.length, 3, "case and spacing do not make a step new");
+  assert.deepEqual(
+    tasks.map((t) => t.id),
+    [1, 2, 3],
+    "and the survivors are renumbered in order",
+  );
+}
+
 // Prose is not a plan, and neither is a list of one-word items.
 assert.deepEqual(parsePlan("I will write the file and then run it."), []);
 assert.deepEqual(parsePlan("- a\n- b\n- c"), [], "too short to be steps");
@@ -673,6 +694,11 @@ assert.equal(parsePlan(Array.from({ length: 40 }, (_, i) => `${i}. step number $
   assert.equal(out, "利用可能なプラグインは以下の通りです。");
   assert.ok(!out.includes("read_file(path"), "the preamble is gone");
   assert.ok(!out.includes("メイン コンテンツ"), "and so is what the page put in front of it");
+
+  // Removing the question must never remove the answer with it: a match in
+  // the wrong place would otherwise return nothing, and a turn came back
+  // blank when this and the chrome trimmer both cut from the same place.
+  assert.equal(dropQuestionForTest("2+2 は？", "2+2 は？"), "2+2 は？");
 
   // An answer that never echoed the question is left alone.
   assert.equal(dropQuestionForTest("ふつうの答え。", asked), "ふつうの答え。");

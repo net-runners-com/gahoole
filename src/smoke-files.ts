@@ -172,6 +172,20 @@ try {
 
   await assert.rejects(() => run("run_command", {}), /needs a command/);
 
+  // An interactive program with no arguments must not sit waiting to be typed
+  // at. A model wrote `-args` where it meant `args`, which launched a bare
+  // python3, and the interpreter held the turn for the full sixty-second
+  // timeout. Closing stdin turns that into an immediate exit.
+  {
+    const started = Date.now();
+    const bare = await run("run_command", { command: "python3" });
+    assert.ok(
+      Date.now() - started < 10_000,
+      `a bare interpreter exits at once (${Date.now() - started}ms)`,
+    );
+    assert.equal(typeof bare.code, "number");
+  }
+
   // Splitting a line is not having a shell: a metacharacter is still an
   // argument, so this prints rather than deletes.
   const asWritten = await run("run_command", { command: "echo a; rm -rf /" });

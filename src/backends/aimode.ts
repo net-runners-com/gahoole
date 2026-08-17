@@ -234,13 +234,25 @@ function dropQuestion(answer: string, asked?: string): string {
   const at = haystack.indexOf(needle);
   if (at === -1) return answer;
 
+  // Only when the echo is at the front, which is the case this was written
+  // for. Cutting to wherever the question happens to appear removes the
+  // answer whenever the page puts the question below it, and an answer
+  // removed is worse than a preamble shown.
+  if (at + needle.length > 4000) return answer;
+
   // Walk the original text until as many non-space characters have gone by as
   // the flattened prefix holds — the two differ only in whitespace.
   const skip = haystack.slice(0, at + needle.length).replace(/ /g, "").length;
   let seen = 0;
   for (let i = 0; i < answer.length; i++) {
     if (!/\s/.test(answer[i]!)) seen++;
-    if (seen >= skip) return answer.slice(i + 1).trim();
+    if (seen >= skip) {
+      const rest = answer.slice(i + 1).trim();
+      // Removing the question must never remove the answer with it. If there
+      // is nothing left, the match was wrong about where the question ended
+      // and the whole text is the better guess.
+      return rest || answer;
+    }
   }
   return answer;
 }
@@ -251,7 +263,13 @@ export const dropQuestionForTest = dropQuestion;
 function stripChrome(text: string): string {
   let out = text;
   for (const re of CHROME) out = out.replace(re, "");
-  return out.trim();
+  out = out.trim();
+  // Trimming the furniture must never trim away the answer. The disclaimer
+  // pattern cuts from where it matches to the end, on the assumption that it
+  // sits below the answer — and once the question was being removed from the
+  // front, a page that puts the disclaimer first left nothing at all. Turns
+  // came back blank.
+  return out || text.trim();
 }
 
 export class AiModeBackend {

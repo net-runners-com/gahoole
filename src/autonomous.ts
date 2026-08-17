@@ -211,6 +211,11 @@ export async function runAutonomously(
     const outcome = readOutcome(text);
     for (const title of outcome.added) {
       if (tasks.length >= 12) break;
+      // A step the plan already has is not a step it discovered.
+      const key = title.toLowerCase().replace(/\s+/g, " ");
+      if (tasks.some((t) => t.title.toLowerCase().replace(/\s+/g, " ") === key)) {
+        continue;
+      }
       tasks.push({ id: tasks.length + 1, title, status: "todo" });
     }
 

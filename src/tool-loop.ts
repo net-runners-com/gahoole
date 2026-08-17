@@ -58,6 +58,15 @@ function claimsWork(answer: string): boolean {
 /** Does the request need something done, rather than answered? */
 const CONTINUE = "Continue. Answer the original question using these results.";
 
+/** Tools that leave something behind. Reading is not doing. */
+const CHANGES = new Set([
+  "write_file",
+  "edit_file",
+  "delete_file",
+  "run_command",
+  "write_note",
+]);
+
 /**
  * Room left for the recap a rotation prepends.
  *
@@ -211,8 +220,8 @@ export class ToolLoop implements Backend {
 
     let nudged = false;
     let ran = 0;
-    /** Set when this turn asked for a skill; see the nudge below. */
-    let loadedSkill = false;
+    /** Has any call actually changed something, rather than looked at it? */
+    let changed = false;
     // The budget can grow once, when the turn turns out to be a procedure
     // rather than a question — see the use_skill case below.
     let rounds = this.#rounds;
@@ -246,26 +255,15 @@ export class ToolLoop implements Backend {
           continue;
         }
 
-        // A turn that loaded a skill and then stopped has read a procedure
-        // and carried out none of it. The nudge below cannot catch this — it
-        // only fires when nothing ran at all, and loading the skill counts as
-        // something. Measured, this stopped after two calls, then six, then
-        // four, depending on nothing in particular.
-        if (!nudged && loadedSkill) {
-          nudged = true;
-          this.#queries++;
-          answer = await this.inner.ask(
-            "You loaded a skill and stopped without carrying it out. Its steps are " +
-              "the task, not a description of one. Do the next step now with a " +
-              `${"TOOL_CALL:"} line, and keep going until the thing it produces exists.`,
-          );
-          continue;
-        }
-
         // Or it reports the work done having called nothing at all — the
         // benchmark's most common failure, and the one a user is least likely
         // to catch, because the reply reads exactly like success.
-        if (!nudged && ran === 0 && (claimsWork(answer) || needsAction(prompt))) {
+        // Reading is not doing. The guard used to be "nothing ran at all",
+        // which let through the turn that reads a reference, prints the file
+        // it was supposed to write, and stops — measured on a plugin skill,
+        // which read reference.md and then set out the spec as prose. What
+        // matters is whether anything *changed*, not whether anything ran.
+        if (!nudged && !changed && (claimsWork(answer) || needsAction(prompt))) {
           nudged = true;
           this.#queries++;
           answer = await this.inner.ask(
@@ -274,18 +272,27 @@ export class ToolLoop implements Backend {
           continue;
         }
         keep(answer);
-        return said.join("\n\n");
+        return this.#finish(said, answer);
       }
 
       keep(answer);
+      // Attempted, not succeeded: a call that was denied still means the model
+      // tried to do the thing, and telling it nothing happened would be worse
+      // advice than letting it report the refusal.
+      if (calls.some((c) => CHANGES.has(c.tool))) changed = true;
 
       // Loading a skill turns the turn into a procedure: read the reference,
       // look at the data, write the spec, check it, build it. Measured, four
       // rounds ran out having read one file — the same wall the typed
       // /skill command hit before it was given a working budget.
+      // Choosing a skill ends the turn. The choice is all this turn was for,
+      // and the caller runs the steps next — but told to stop and handed its
+      // results anyway, the model carried on for twelve more calls and built
+      // the thing itself with pandas. An instruction not to continue competes
+      // with the results in front of it; not being asked to continue does
+      // not.
       if (calls.some((c) => c.tool === "use_skill")) {
-        if (rounds < 10) rounds = 10;
-        loadedSkill = true;
+        return this.#finish(said, answer);
       }
 
       // The same call, with the same arguments, twice running is not progress.
@@ -309,6 +316,7 @@ export class ToolLoop implements Backend {
       }
 
       ran += calls.length;
+      void ran;
       const outcomes: {
         tool: string;
         outcome: { output?: unknown; error?: unknown };
@@ -348,7 +356,23 @@ export class ToolLoop implements Backend {
 
     // Out of iterations: hand back what we have rather than looping forever.
     keep(answer);
-    return said.join("\n\n");
+    return this.#finish(said, answer);
+  }
+
+  /**
+   * What the turn hands back, which is never nothing.
+   *
+   * A turn whose replies were all tool calls and no prose used to return the
+   * empty string, and the user got tool lines followed by silence — measured
+   * three times running while chasing something else. Silence is not an
+   * answer; if there is no prose to give, say which it was.
+   */
+  #finish(said: string[], last: string): string {
+    const text = said.join("\n\n").trim();
+    if (text) return text;
+    const bare = stripCalls(last).trim();
+    if (bare) return bare;
+    return "(the model answered with tool calls and no words)";
   }
 
   /** One tool call, through the same hooks a native tool call would take. */

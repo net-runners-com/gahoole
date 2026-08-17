@@ -198,7 +198,11 @@ const tools = {
   const loop = new ToolLoop(stub, tools, lifecycle, 3);
   loop.reset();
   const answer = await inTurn(() => loop.ask("loop forever"));
-  assert.equal(answer, "", "the trailing call markers are stripped");
+  assert.ok(!answer.includes("TOOL_CALL"), "the trailing call markers are stripped");
+  // ...and what is left is not nothing. A turn whose replies were all tool
+  // calls used to hand back the empty string, and the user got tool lines
+  // followed by silence.
+  assert.match(answer, /tool calls and no words/, `something is said: ${answer}`);
   assert.ok(stub.prompts.length <= 5, `bounded at ${stub.prompts.length} prompts`);
 }
 
@@ -255,8 +259,14 @@ const tools = {
   loop.reset();
   await inTurn(() => loop.ask("save a note"));
   assert.ok(
-    stub.prompts.at(-1)?.includes("missing path"),
-    `told what was missing: ${stub.prompts.at(-1)?.slice(0, 120)}`,
+    stub.prompts.some((p) => p.includes("missing path")),
+    `told what was missing: ${stub.prompts.map((p) => p.slice(0, 60)).join(" | ")}`,
+  );
+  // ...and then told that asking for a note and reading a file is not saving
+  // one. Nothing changed, so the turn does not end reporting that it did.
+  assert.ok(
+    stub.prompts.some((p) => p.includes("nothing actually happened")),
+    "a turn that changed nothing is not allowed to claim otherwise",
   );
 }
 
@@ -429,6 +439,32 @@ const tools = {
     !/same call again/.test(stub.prompts[1] ?? ""),
     "and the first time is not",
   );
+}
+
+// --- choosing a skill ends the turn ----------------------------------------
+//
+// The choice is all that turn is for, and the caller runs the steps next. Told
+// to stop and handed its results anyway, the model carried on for twelve more
+// calls and built the thing itself — an instruction not to continue competes
+// with the results in front of it, and not being asked to continue does not.
+{
+  const stub = new StubBackend([
+    ['選びます。', 'TOOL_CALL: {"tool":"use_skill","input":{"name":"doc-new"}}'].join("\n"),
+    "should never be asked for",
+  ]);
+  const withSkill = {
+    ...tools,
+    use_skill: {
+      description: "Load a skill.",
+      inputSchema: { shape: { name: {} } },
+      execute: async () => ({ skill: "doc-new", note: "selected" }),
+    },
+  };
+  const loop = new ToolLoop(stub, withSkill, lifecycle);
+  loop.reset();
+  const out = await inTurn(() => loop.ask("Excel にして"));
+  assert.equal(stub.prompts.length, 1, "no follow-up is asked for");
+  assert.match(out, /選びます。/, "and the prose it chose with is kept");
 }
 
 console.log(

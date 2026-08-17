@@ -327,7 +327,7 @@ export const runCommand = createTool({
 
     const { execFile } = await import("node:child_process");
     return await new Promise((resolve, reject) => {
-      execFile(
+      const child = execFile(
         exe,
         argv,
         { cwd: ROOT, timeout: 60_000, maxBuffer: 1 << 20 },
@@ -341,6 +341,11 @@ export const runCommand = createTool({
           resolve({ stdout: cap(stdout), stderr: cap(stderr), code: code ?? 0 });
         },
       );
+      // Nothing is ever going to be typed at it. A model wrote `-args` where
+      // it meant `args`, which launched a bare `python3`, and the interactive
+      // interpreter sat waiting on stdin for the full sixty-second timeout.
+      // Closing it turns that into an immediate exit.
+      child.stdin?.end();
     });
   },
 });

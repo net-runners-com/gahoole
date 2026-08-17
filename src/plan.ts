@@ -36,6 +36,7 @@ const PLAN_LINE = /^\s*(?:\*\*|__)?\s*(?:[-*+]|\d+[.)])\s+(.{3,200})$/gm;
  */
 export function parsePlan(text: string): Task[] {
   const tasks: Task[] = [];
+  const seen = new Set<string>();
   for (const m of text.matchAll(PLAN_LINE)) {
     const title = (m[1] ?? "")
       .replace(/^\**\s*/, "")
@@ -44,6 +45,13 @@ export function parsePlan(text: string): Task[] {
     if (!title) continue;
     // A list of tools or files is not a plan; steps have verbs and length.
     if (title.length < 6) continue;
+    // Nor is the same step written twice. A measured run came back with
+    // twelve items of which four were two pairs — the model restated the
+    // first steps at the end — and a plan that lists a step twice is a plan
+    // that will be walked twice.
+    const key = title.toLowerCase().replace(/\s+/g, " ");
+    if (seen.has(key)) continue;
+    seen.add(key);
     tasks.push({ id: tasks.length + 1, title, status: "todo" });
   }
   return tasks.slice(0, 12);

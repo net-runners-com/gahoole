@@ -236,22 +236,20 @@ export function createSkillTool(
   const skills = allSkills(plugins);
   if (skills.length === 0) return undefined;
 
-  // What each skill is *for* goes in the first sentence, because that is all
-  // of a description the preamble keeps — `describeTool` cuts at the first
-  // ". ". Naming the skills was not enough: asked for a spreadsheet from a
-  // CSV, the model wrote its own Python and produced a CSV, because "doc"
-  // told it nothing about what doc does.
-  const gist = (s: Skill): string => {
-    const first = (s.description.split(/[。.]\s|。/)[0] ?? "").trim();
-    return first.length > 70 ? `${first.slice(0, 70)}…` : first;
-  };
-  const listed = skills.map((s) => `${s.name}（${gist(s)}）`).join("、 ");
+  // Short on purpose.
+  //
+  // It was three hundred characters of skill descriptions, on the theory that
+  // the model needed to know what each one was for. It did not help — what
+  // made it reach for a skill was the line in the reminder — and it did harm:
+  // with the long description in the tool list, turns came back with tool
+  // calls and no words at all, and the same question with no plugins loaded
+  // answered normally. The preamble has a budget nobody wrote down, and this
+  // was spending it.
+  const names = skills.map((s) => s.name).join(", ");
 
   return createTool({
     id: "use_skill",
-    description:
-      `Load one of these skills and follow its instructions rather than working the task out yourself — ` +
-      `${listed} — when the request is one of those things.`,
+    description: `Load and follow an installed skill: ${names}.`,
     inputSchema: z.object({
       name: z.string().describe("Which skill"),
       args: z.string().optional().describe("What the skill should work on"),
@@ -306,9 +304,17 @@ export function skillsHint(plugins: Plugin[]): string {
   const skills = allSkills(plugins);
   if (skills.length === 0) return "";
   const names = skills.map((s) => s.name).join(", ");
+  // Phrased as an option, not a prohibition.
+  //
+  // It read "do not write your own program to do it", and a model that had
+  // already started reading the file was being told its next step was wrong
+  // without being given one it could take instead. Measured: with the plugins
+  // loaded the turn came back with tool calls and no words at all; with the
+  // same question and no plugins, it answered normally. An instruction that
+  // forbids the path you are on and names no other produces silence.
   return (
-    `[Installed skills: ${names}. If what is asked is one of the things a skill does, ` +
-    `call use_skill first and follow what it says — do not write your own program to do it.]`
+    `[Skills available: ${names}. If one of them already does what is being asked, ` +
+    `use_skill is the shorter way. Otherwise answer as you normally would.]`
   );
 }
 
