@@ -29,8 +29,15 @@ jobs:
 
   # The page reader, against a fixture in real Chromium. Separate because it
   # downloads a browser, and slow enough that it should not hold up the rest.
+  # On every platform, because this is the only job that launches a browser
+  # and "does Chromium come up at all here" is the question Windows was most
+  # likely to answer differently.
   dom:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
