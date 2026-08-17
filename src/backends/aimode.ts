@@ -100,6 +100,15 @@ const COMPOSER = "textarea:visible";
 /**
  * The composer carries maxlength="8192". Anything longer is silently cut off
  * by the page, so cut it here where the truncation is at least visible.
+ *
+ * Measured rather than assumed, and two ways round it were tried and failed.
+ * Assigning `.value` past the limit works — the field holds 14049 characters —
+ * and sending it produces nothing at all: the composer empties and no answer
+ * ever arrives, and the same happens at 7049 characters, so a bare assignment
+ * plus a synthetic input event is not a send at all. Through the real input
+ * path, insertText of 12000 or 20000 characters leaves exactly 8192 in the
+ * field. The cap binds, and the result budget that works around it is not
+ * working around an imaginary limit.
  */
 export const COMPOSER_MAX = 8000;
 const SEND = 'button[aria-label="送信"], button[aria-label="Send"]';
