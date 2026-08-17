@@ -12,6 +12,7 @@ import {
   describeTool,
   formatResults,
   parseBody,
+  looksLikeSearch,
   parseCalls,
   parseMalformed,
   stripCalls,
@@ -240,6 +241,8 @@ export class ToolLoop implements Backend {
     let changed = false;
     /** Follow-ups spent asking for a file's contents; see below. */
     let bodiesAsked = 0;
+    /** One retry per turn for an answer that went to the web instead. */
+    let searched = false;
     /** A program this turn wrote, if it has not been run. */
     let wrote: string | undefined;
     let ranSomething = false;
@@ -250,6 +253,20 @@ export class ToolLoop implements Backend {
       // Between rounds, where nothing is half-done: a tool that has started
       // runs to its end, and the next one does not start.
       stopHere();
+      // The backend went looking things up instead of answering. Asking again
+      // works — it is a lapse rather than a refusal — and arguing with it in
+      // the preamble did not stop it happening.
+      if (!searched && looksLikeSearch(answer)) {
+        searched = true;
+        this.#queries++;
+        answer = await this.inner.ask(
+          `That was a web search, and I did not ask for one. Answer from what ` +
+            `is in this conversation, or emit the ${"TOOL_CALL:"} line for the ` +
+            `next step. Do not search.`,
+        );
+        continue;
+      }
+
       const calls = parseCalls(answer);
 
       if (calls.length === 0) {

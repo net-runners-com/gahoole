@@ -781,6 +781,19 @@ export class AiModeBackend {
         // An empty page is worth asking again for, once. The retry starts a
         // fresh navigation rather than continuing the thread, because whatever
         // state left the container empty is in the page.
+        // A declined query, asked again once. It is a search engine deciding
+        // it has nothing for this search, and it is not deterministic — the
+        // same question a moment later is usually answered. Measured, one
+        // refusal killed a whole benchmark task because nothing retried it.
+        if (e instanceof AiModeRefusedError && !this.#retriedRefusal) {
+          this.#retriedRefusal = true;
+          onEmpty?.();
+          this.#started = false;
+          this.#seen = "";
+          await sleep(1200);
+          continue;
+        }
+
         if (e instanceof EmptyAnswerError && !this.#retriedEmpty) {
           this.#retriedEmpty = true;
           onEmpty?.();
@@ -822,6 +835,8 @@ export class AiModeBackend {
   #relaunched = false;
   /** One retry per turn for an empty page; reset once a turn succeeds. */
   #retriedEmpty = false;
+  /** One retry per turn for a declined query; see the catch in `ask`. */
+  #retriedRefusal = false;
 
   /** The last few exchanges, compact enough to prepend to a prompt. */
   #recap(): string {

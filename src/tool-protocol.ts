@@ -72,7 +72,21 @@ const CALL_RE = /^[\s>*_`]*TOOL_CALL:[ \t*_`]*(\{.*\})[ \t*_`]*$/gm;
  * protocol requires the JSON on a single line, and a lazy match would stop at
  * the first `}` of a nested object.
  */
-const CALL_LINE_RE = /^[\s>*_`]*TOOL_CALL:[ \t*_`]*\{.*\}[ \t*_`]*\n?/gm;
+const CALL_LINE_RE = /^[\s>*_`]*TOOL_CALL:[ \t*_`]*(?:[a-z_][a-z0-9_]*[ \t]*)?\{.*\}[ \t*_`]*\n?/gm;
+
+/**
+ * The same line with the tool named outside the JSON.
+ *
+ *   TOOL_CALL: run_command { "command": "node", "args": ["sort.js"] }
+ *
+ * Not the documented shape, and produced anyway — measured, it cost a
+ * benchmark task, because the strict pattern did not match it and the
+ * malformed-call reporter used the same pattern and so did not see it either.
+ * The information is all there; refusing it would be refusing what the model
+ * reliably writes.
+ */
+const NAMED_CALL_RE =
+  /^[\s>*_`]*TOOL_CALL:[ \t*_`]*([a-z_][a-z0-9_]*)[ \t]*(\{.*\})[ \t*_`]*$/gm;
 
 export interface ParsedCall {
   tool: string;
@@ -237,8 +251,51 @@ export function parseBody(text: string): string | undefined {
  * call the question does not arise, and a block written *before* the marker
  * still counts, because models put the code first about as often as last.
  */
+/**
+ * Did the backend go and search the web instead of answering?
+ *
+ * It is a search engine, and a question it does not recognise as an
+ * instruction gets treated as one to look up. Told not to — in the preamble,
+ * and again in the reminder that rides on every message — it still does,
+ * rarely: measured, the turn after writing sort.js came back with a Stack
+ * Overflow link and the file was never run.
+ *
+ * The shape is unmistakable, which is what makes it worth catching rather
+ * than arguing with. Nothing here is a normal answer.
+ */
+export function looksLikeSearch(text: string): boolean {
+  const head = text.trim().slice(0, 400);
+  return (
+    /^\s*\d+\s*件のサイト/.test(head) ||
+    /ウェブ検索結果は次のとおり/.test(head) ||
+    /^\s*(?:top |the )?web search results/i.test(head)
+  );
+}
+
 export function parseCalls(text: string): ParsedCall[] {
   const found = [...text.matchAll(CALL_RE)];
+  // The tool named before the JSON rather than inside it. Read as a call with
+  // that name and that input, in the position it was written.
+  for (const m of text.matchAll(NAMED_CALL_RE)) {
+    if (found.some((f) => f.index === m.index)) continue;
+    try {
+      const input = JSON.parse(m[2] ?? "{}") as Record<string, unknown>;
+      // `{"tool":…}` written after the name is the documented shape with a
+      // label in front; the JSON wins.
+      const json = JSON.stringify(
+        typeof input.tool === "string" ? input : { tool: m[1], input },
+      );
+      found.push(
+        Object.assign([m[0], json] as unknown as RegExpMatchArray, {
+          index: m.index,
+          input: m.input,
+        }),
+      );
+    } catch {
+      // Reported by parseMalformed like any other unreadable line.
+    }
+  }
+  found.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
   const fences = [...text.matchAll(FENCE_G)].map((m) => ({
     at: m.index ?? 0,
     body: (m[1] ?? "").replace(/\n$/, ""),
@@ -277,7 +334,9 @@ export function parseCalls(text: string): ParsedCall[] {
  */
 export function parseMalformed(text: string): MalformedCall[] {
   const bad: MalformedCall[] = [];
+  const named = new Set([...text.matchAll(NAMED_CALL_RE)].map((m) => m.index));
   for (const m of text.matchAll(CALL_RE)) {
+    if (named.has(m.index)) continue;
     const json = m[1];
     if (!json) continue;
     try {

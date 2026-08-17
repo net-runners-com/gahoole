@@ -130,6 +130,47 @@ for (const decorated of [
   assert.equal(content(calls[0]!), "hello");
 }
 
+// The tool named outside the JSON, which is not the documented shape and is
+// produced anyway. It cost a benchmark task: the strict pattern did not match
+// it, and the malformed-call reporter used the same pattern so did not see it
+// either — the call vanished with nothing said about it.
+{
+  const [c] = parseCalls(
+    'TOOL_CALL: run_command { "command": "node", "args": ["sort.js"] }',
+  );
+  assert.equal(c?.tool, "run_command");
+  assert.deepEqual(c?.input, { command: "node", args: ["sort.js"] });
+
+  // A name in front of the documented shape is a label; the JSON wins.
+  const [labelled] = parseCalls(
+    'TOOL_CALL: write_file {"tool":"write_file","input":{"path":"b"}}',
+  );
+  assert.equal(labelled?.tool, "write_file");
+  assert.deepEqual(labelled?.input, { path: "b" });
+
+  // Both forms in one reply, in the order they were written, each with its
+  // own block.
+  const two = parseCalls(
+    [
+      'TOOL_CALL: {"tool":"write_file","input":{"path":"a.js"}}',
+      "```",
+      "console.log(1)",
+      "```",
+      'TOOL_CALL: run_command { "command": "node", "args": ["a.js"] }',
+    ].join("\n"),
+  );
+  assert.equal(two.length, 2);
+  assert.equal(two[0]?.tool, "write_file");
+  assert.equal((two[0]?.input as { content?: string }).content, "console.log(1)");
+  assert.equal(two[1]?.tool, "run_command");
+
+  // And it is stripped from the prose like any other marker line.
+  assert.equal(
+    stripCalls('やります。\nTOOL_CALL: run_command { "command": "ls" }\n終わり。'),
+    "やります。\n終わり。",
+  );
+}
+
 // Prose that merely mentions the marker is not a call.
 assert.deepEqual(parseCalls("I could use TOOL_CALL: to read the file."), []);
 assert.deepEqual(parseCalls("no markers here at all"), []);
@@ -798,6 +839,34 @@ assert.equal(parsePlan(Array.from({ length: 40 }, (_, i) => `${i}. step number $
   assert.equal(isInterrupted(new Interrupted()), true);
   assert.equal(isInterrupted(new Error("AI Mode returned nothing")), false);
   assert.equal(isInterrupted("stopped"), false);
+}
+
+// ===========================================================================
+// the backend going to the web instead of answering
+// ===========================================================================
+//
+// It is a search engine, and a message it does not read as an instruction
+// gets looked up. Told not to in the preamble and again in every reminder, it
+// still does, rarely — the turn after writing sort.js came back with a Stack
+// Overflow link and the file was never run.
+{
+  const { looksLikeSearch } = await import("./tool-protocol.js");
+  assert.equal(
+    looksLikeSearch("1 件のサイト このトピックの調査に有用な上位のウェブ検索結果は次のとおりです。 Stack Overflow"),
+    true,
+  );
+  assert.equal(looksLikeSearch("6 件のサイト …"), true);
+  assert.equal(looksLikeSearch("Top web search results for this topic:"), true);
+
+  // An answer that merely mentions searching, or contains a link, is an
+  // answer. Retrying those would spend a query on nothing.
+  assert.equal(looksLikeSearch("検索してみましたが見つかりませんでした。"), false);
+  assert.equal(
+    looksLikeSearch("参考: https://stackoverflow.com にも同じ話があります。"),
+    false,
+  );
+  assert.equal(looksLikeSearch('TOOL_CALL: {"tool":"run_command","input":{}}'), false);
+  assert.equal(looksLikeSearch("3 件のファイルを読みました。"), false, "not every count is a search");
 }
 
 console.log("ok — protocol: calls, bodies, budgets, plans, verdicts");
