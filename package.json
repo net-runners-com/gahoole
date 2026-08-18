@@ -1,9 +1,8 @@
 {
   "name": "gahoole",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "Gahoole — a local agent with a Claude Code-shaped lifecycle: process, session, turn, tool call.",
+  "description": "ターミナルで動く、API キーの要らないローカル AI エージェント",
   "scripts": {
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
@@ -65,9 +64,27 @@
     "dist",
     "bin",
     "mcp.json.example",
-    "README.md"
+    "README.md",
+    "docs",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20.6"
+  },
+  "license": "MIT",
+  "keywords": [
+    "agent",
+    "cli",
+    "ai",
+    "automation",
+    "claude-code"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/net-runners-com/gahoole.git"
+  },
+  "homepage": "https://github.com/net-runners-com/gahoole#readme",
+  "bugs": {
+    "url": "https://github.com/net-runners-com/gahoole/issues"
   }
 }

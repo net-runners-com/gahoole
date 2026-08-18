@@ -1,7 +1,0 @@
-スタッフ名,合計出勤日数,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
-曜日,,=TEXT(C1,"aaa"),=TEXT(D1,"aaa"),=TEXT(E1,"aaa"),=TEXT(F1,"aaa"),=TEXT(G1,"aaa"),=TEXT(H1,"aaa"),=TEXT(I1,"aaa"),=TEXT(J1,"aaa"),=TEXT(K1,"aaa"),=TEXT(L1,"aaa"),=TEXT(M1,"aaa"),=TEXT(N1,"aaa"),=TEXT(O1,"aaa"),=TEXT(P1,"aaa"),=TEXT(Q1,"aaa"),=TEXT(R1,"aaa"),=TEXT(S1,"aaa"),=TEXT(T1,"aaa"),=TEXT(U1,"aaa"),=TEXT(V1,"aaa"),=TEXT(W1,"aaa"),=TEXT(X1,"aaa"),=TEXT(Y1,"aaa"),=TEXT(Z1,"aaa"),=TEXT(AA1,"aaa"),=TEXT(AB1,"aaa"),=TEXT(AC1,"aaa"),=TEXT(AD1,"aaa"),=TEXT(AE1,"aaa"),=TEXT(AF1,"aaa"),=TEXT(AG1,"aaa")
-スタッフA,=COUNTA(C3:AG3)-COUNTIF(C3:AG3,"休"),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
-スタッフB,=COUNTA(C4:AG4)-COUNTIF(C4:AG4,"休"),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
-スタッフC,=COUNTA(C5:AG5)-COUNTIF(C5:AG5,"休"),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
-スタッフD,=COUNTA(C6:AG6)-COUNTIF(C6:AG6,"休"),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
-スタッフE,=COUNTA(C7:AG7)-COUNTIF(C7:AG7,"休"),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
