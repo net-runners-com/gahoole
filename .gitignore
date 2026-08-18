@@ -5,3 +5,4 @@ data/
 mcp.json
 dist/
 bench-tmp/
+*.tgz

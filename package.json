@@ -40,7 +40,8 @@
     "smoke:exports": "tsx src/smoke-exports.ts",
     "smoke:notify": "tsx src/smoke-notify.ts",
     "prepack": "npm run build",
-    "smoke:live": "npm run smoke:aimode && npm run canary"
+    "smoke:live": "npm run smoke:aimode && npm run canary",
+    "dist": "npm pack"
   },
   "dependencies": {
     "@mastra/core": "^1.59.0",
