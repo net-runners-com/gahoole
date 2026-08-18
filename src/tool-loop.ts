@@ -309,6 +309,15 @@ export class ToolLoop implements Backend {
         // knowing what the job was.
         if (!nudged && wrote && !ranSomething) {
           nudged = true;
+          // A round to carry it out in.
+          //
+          // The nudge asks for a run_command, and the answer to it arrives on
+          // the next round — so at the last round the ask was spent and the
+          // call it produced was never executed. Measured: asked for a shift
+          // table, the turn wrote generate_shift.py, was told to run it,
+          // answered with exactly that call, and stopped one round short of
+          // doing it. A query spent to be told what to do and no chance to.
+          if (i + 1 >= rounds) rounds++;
           this.#queries++;
           answer = await this.inner.ask(
             `You wrote ${wrote} and did not run it, so whatever it makes does ` +

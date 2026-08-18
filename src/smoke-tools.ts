@@ -582,6 +582,46 @@ const tools = {
   }
 }
 
+// A script that was written and not run gets a round to be run in.
+//
+// The nudge asks for run_command and the answer arrives on the next round, so
+// at the last round the ask was spent and the call it produced was never
+// executed. Measured live: asked for a shift table, the turn wrote
+// generate_shift.py, was told to run it, answered with exactly that call, and
+// stopped one round short of doing it.
+{
+  let ran = 0;
+  const making = {
+    ...tools,
+    write_file: {
+      description: "Write a file",
+      inputSchema: { shape: { path: 0, content: 0 } },
+      execute: async (i: unknown) => ({ path: (i as { path: string }).path, bytes: 7 }),
+    },
+    run_command: {
+      description: "Run a command",
+      inputSchema: { shape: { command: 0, args: 0 } },
+      execute: async () => {
+        ran++;
+        return { stdout: "ran", code: 0 };
+      },
+    },
+  };
+  const stub = new StubBackend([
+    'TOOL_CALL: {"tool":"write_file","input":{"path":"make.py","content":"print(1)"}}',
+    "作成しました。", // stops here, with nothing run — the last round
+    'TOOL_CALL: {"tool":"run_command","input":{"command":"echo","args":["ran"]}}',
+    "実行しました。",
+  ]);
+  const loop = new ToolLoop(stub, making, lifecycle, 2); // two rounds, on purpose
+  loop.reset();
+  await inTurn(() => loop.ask("シフト管理表を Excel で作って"));
+
+  const asked = stub.prompts.join("\n");
+  assert.match(asked, /did not run it/, "it was told to run what it wrote");
+  assert.equal(ran, 1, "and got a round to do it in");
+}
+
 console.log(
   `ok — tool protocol: ${describeTool("read_file", tools.read_file).params.join(",")} parsed, denied, bounded`,
 );
