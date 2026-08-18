@@ -97,6 +97,30 @@ assert.deepEqual(
   assert.deepEqual(recoveryFor(new Error("no such file"), fresh()), { do: "give up" });
 }
 
+// --- a profile that something else is holding --------------------------------
+//
+// A stale SingletonLock names the pid that made it, and a pid is not an
+// identity: this failed on a lock left by 87318, which by then belonged to
+// something else, so the guard read "still running" and stood aside. What the
+// launch says is the only thing that knows.
+{
+  const { isProfileLocked } = await import("./backends/aimode.js");
+
+  const real = new Error(
+    "browserType.launchPersistentContext: Failed to create a ProcessSingleton " +
+      "for your profile directory. This usually means that the profile is " +
+      "already in use by another instance of Chromium.",
+  );
+  assert.equal(isProfileLocked(real), true);
+  assert.equal(
+    isProfileLocked(new Error("Failed to create /tmp/p/SingletonLock: File exists (17)")),
+    true,
+    "the message Chromium itself writes",
+  );
+  assert.equal(isProfileLocked(new Error("net::ERR_INTERNET_DISCONNECTED")), false);
+  assert.equal(isProfileLocked(undefined), false);
+}
+
 console.log(
   "ok — rate limit: 429-shaped, rotate then wait, bounded; recovery for empty, refusal, crash",
 );

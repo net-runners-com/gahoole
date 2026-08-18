@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { launchPersistentContext } from "cloakbrowser";
@@ -327,6 +328,32 @@ export function recoveryFor(e: unknown, seen: Attempts): Recovery {
   return seen.rotations + 1 > 2 ? { do: "rotate", waitMs: seen.waitMs } : { do: "rotate" };
 }
 
+/** Is this pid a Chromium, rather than whatever inherited the number? */
+function isChromium(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false; // gone, or not ours to signal
+  }
+  try {
+    const out = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
+      encoding: "utf8",
+      timeout: 2000,
+    });
+    return /chromium|chrome/i.test(out);
+  } catch {
+    // No `ps`, or it said nothing. Alive is the safer read: refusing to launch
+    // is recoverable, and deleting a live browser's lock corrupts its profile.
+    return true;
+  }
+}
+
+/** The launch failed because something else holds the profile. */
+export function isProfileLocked(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e);
+  return /ProcessSingleton|SingletonLock|profile directory/i.test(m);
+}
+
 export class AiModeRateLimitError extends Error {
   /** Shaped so `classifyFailure` reads it the same way it reads a 429. */
   readonly status = 429;
@@ -484,7 +511,7 @@ export class AiModeBackend {
    * lock whose process is gone is stale and safe to clear — which beats
    * greeting the user with "profile is already in use" after a crash.
    */
-  #clearStaleLock(dir: string): void {
+  #clearStaleLock(dir: string, force = false): void {
     const lock = path.join(dir, "SingletonLock");
     let target: string;
     try {
@@ -493,14 +520,7 @@ export class AiModeBackend {
       return; // no lock, or not a symlink
     }
     const pid = Number(target.split("-").pop());
-    if (Number.isFinite(pid) && pid > 0) {
-      try {
-        process.kill(pid, 0); // still running — leave it alone
-        return;
-      } catch {
-        /* gone */
-      }
-    }
+    if (!force && Number.isFinite(pid) && pid > 0 && isChromium(pid)) return;
     for (const f of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) {
       try {
         fs.unlinkSync(path.join(dir, f));
@@ -537,11 +557,38 @@ export class AiModeBackend {
     const dir = profileFor(this.#profile);
     fs.mkdirSync(dir, { recursive: true });
     this.#clearStaleLock(dir);
-    const ctx = (await launchPersistentContext({
-      headless: !this.opts.headed,
-      userDataDir: dir,
-      viewport: { width: 1280, height: 900 },
-    })) as unknown as Ctx & { newPage: () => Promise<any> };
+    const open = () =>
+      launchPersistentContext({
+        headless: !this.opts.headed,
+        userDataDir: dir,
+        viewport: { width: 1280, height: 900 },
+      }) as unknown as Promise<Ctx & { newPage: () => Promise<any> }>;
+
+    // Decided by the outcome, not by a guess beforehand.
+    //
+    // The lock names the process that holds it, and the check above asks
+    // whether that process is alive — but a number is not an identity. This
+    // failed on a lock left by pid 87318, which by then belonged to something
+    // else entirely, so the guard read "still running" and stood aside. The
+    // launch is the only thing that actually knows, so when it says the
+    // profile is in use, the lock goes whatever the pid says and it tries once
+    // more.
+    let ctx: Ctx & { newPage: () => Promise<any> };
+    try {
+      ctx = await open();
+    } catch (e) {
+      if (!isProfileLocked(e)) throw e;
+      this.#clearStaleLock(dir, true);
+      try {
+        ctx = await open();
+      } catch (again) {
+        if (!isProfileLocked(again)) throw again;
+        throw new Error(
+          `そのブラウザは他の gahoole が使っています。もう一方を終了してから、` +
+            `もう一度お試しください。（続く場合は ${dir} を削除してください）`,
+        );
+      }
+    }
     this.#ctx = ctx;
     const pages = ctx.pages() as unknown as any[];
     this.#page = pages[0] ?? (await ctx.newPage());
