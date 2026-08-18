@@ -4,6 +4,7 @@ import { createToolHooks } from "./agent.js";
 import { log } from "./output.js";
 import { stopHere } from "./interrupt.js";
 import { beingDriven } from "./driving.js";
+import { artifactsOnDisk, wantedArtifact } from "./deliverable.js";
 import type { Profile } from "./profiles.js";
 import { COMPOSER_MAX } from "./backends/aimode.js";
 import {
@@ -73,6 +74,13 @@ function claimsWork(answer: string): boolean {
 const CONTINUE = "Continue. Answer the original question using these results.";
 
 /** A file that exists to be run rather than to be read. */
+/**
+ * The reply ends by asking the person something. That is an answer in its own
+ * right — nudging over it would bulldoze a clarifying question into barreling
+ * ahead, which is the wrong trade in an interactive session.
+ */
+const asksBack = (text: string): boolean => /[?？]\s*$/.test(stripCalls(text).trim());
+
 const RUNNABLE = /\.(py|js|mjs|ts|sh|rb|pl)$/i;
 
 /** Tools that leave something behind. Reading is not doing. */
@@ -246,6 +254,15 @@ export class ToolLoop implements Backend {
     /** A program this turn wrote, if it has not been run. */
     let wrote: string | undefined;
     let ranSomething = false;
+    // What the request asked to end up with, when it named a format — and
+    // what already exists, so a new one stands out. Snapshots of the disk,
+    // not the calls: the artifact usually arrives from a script the model
+    // ran, and no write_file ever names it.
+    const wanted = wantedArtifact(prompt);
+    const already = wanted ? artifactsOnDisk(process.cwd(), wanted.ext) : new Set<string>();
+    const delivered = (): boolean =>
+      !wanted ||
+      [...artifactsOnDisk(process.cwd(), wanted.ext)].some((f) => !already.has(f));
     // The budget can grow once, when the turn turns out to be a procedure
     // rather than a question — see the use_skill case below.
     let rounds = this.#rounds;
@@ -328,6 +345,32 @@ export class ToolLoop implements Backend {
           continue;
         }
 
+        // Or it made a file — just not the one asked for.
+        //
+        // Asked for a shift table "エクセルで", a run wrote shift_data.json
+        // and stopped: something was written, so the nudge below stayed
+        // quiet, and the turn ended clean with no spreadsheet. The request
+        // named the format, so this is checkable without knowing anything
+        // else about the job.
+        //
+        // A reply that ends by asking the person a question is allowed to
+        // stand — a clarifying question is an answer, not a stall. And two
+        // rounds are reserved rather than one, because the usual route to an
+        // .xlsx is a script and a run.
+        if (!nudged && wanted && !delivered() && !beingDriven() && !asksBack(answer)) {
+          nudged = true;
+          if (i + 2 >= rounds) rounds = i + 3;
+          this.#queries++;
+          answer = await this.inner.ask(
+            `The request asked for a ${wanted.ext} file (「${wanted.word}」) and none exists yet — ` +
+              `whatever was written, it is not that file. Finish now with ${"TOOL_CALL:"} lines: ` +
+              `write it directly, or write a script and run it. Choose sensible details yourself ` +
+              `rather than asking. If the request does not actually need that file created, say why ` +
+              `in one sentence.`,
+          );
+          continue;
+        }
+
         // Or it reports the work done having called nothing at all — the
         // benchmark's most common failure, and the one a user is least likely
         // to catch, because the reply reads exactly like success.
@@ -340,7 +383,13 @@ export class ToolLoop implements Backend {
         // an autonomous run this nudge says what the run's own step prompt is
         // about to say — measured at three of nineteen queries in one run and
         // four of twenty-one in another, a fifth of the budget spent twice.
-        if (!nudged && !changed && !beingDriven() && (claimsWork(answer) || needsAction(prompt))) {
+        if (
+          !nudged &&
+          !changed &&
+          !beingDriven() &&
+          !asksBack(answer) &&
+          (claimsWork(answer) || needsAction(prompt))
+        ) {
           nudged = true;
           this.#queries++;
           answer = await this.inner.ask(
@@ -409,16 +458,6 @@ export class ToolLoop implements Backend {
       // look at the data, write the spec, check it, build it. Measured, four
       // rounds ran out having read one file — the same wall the typed
       // /skill command hit before it was given a working budget.
-      // Choosing a skill ends the turn. The choice is all this turn was for,
-      // and the caller runs the steps next — but told to stop and handed its
-      // results anyway, the model carried on for twelve more calls and built
-      // the thing itself with pandas. An instruction not to continue competes
-      // with the results in front of it; not being asked to continue does
-      // not.
-      if (calls.some((c) => c.tool === "use_skill")) {
-        return this.#finish(said, answer);
-      }
-
       // The same call, with the same arguments, twice running is not progress.
       // It is what an autonomous run looks like when it has lost track of what
       // it already did, and left alone it spends the rest of the budget doing
@@ -451,6 +490,22 @@ export class ToolLoop implements Backend {
           tool: call.tool,
           outcome: await this.#run(call.tool, call.input),
         });
+      }
+
+      // Choosing a skill ends the turn. The choice is all this turn was for,
+      // and the caller runs the steps next — but told to stop and handed its
+      // results anyway, the model carried on for twelve more calls and built
+      // the thing itself with pandas. An instruction not to continue competes
+      // with the results in front of it; not being asked to continue does
+      // not.
+      //
+      // After the calls have run, not before. This return used to sit above
+      // the execute loop, which ended the turn with the use_skill call parsed
+      // and never made: onSelect never fired, the caller had nothing to run,
+      // and the turn reported success with a JSON on disk and no spreadsheet.
+      // The call has to happen; only the results must not go back.
+      if (calls.some((c) => c.tool === "use_skill")) {
+        return this.#finish(said, answer);
       }
       // One budget for the message, and the message is not only the results.
       //

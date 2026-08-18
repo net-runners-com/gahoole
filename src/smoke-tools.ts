@@ -3,6 +3,9 @@
  * scripted sequence of answers, so the loop, the parser and the hook path are
  * all exercised without a query against the rate limit.
  */
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import assert from "node:assert/strict";
 import { Lifecycle } from "./lifecycle.js";
 import { ToolLoop } from "./tool-loop.js";
@@ -620,6 +623,127 @@ const tools = {
   const asked = stub.prompts.join("\n");
   assert.match(asked, /did not run it/, "it was told to run what it wrote");
   assert.equal(ran, 1, "and got a round to do it in");
+}
+
+// --- the request named the file it wants ---------------------------------------
+//
+// "エクセルで作って" and a turn that ends with shift_data.json is a turn that
+// finished the wrong job. The format word in the request is the whole
+// specification, so the check is deterministic — no model involved.
+{
+  const { wantedArtifact, artifactsOnDisk } = await import("./deliverable.js");
+
+  assert.deepEqual(wantedArtifact("シフト管理表作ってエクセルで作って"), {
+    ext: ".xlsx",
+    word: "エクセル",
+  });
+  assert.deepEqual(wantedArtifact("レポートをPDFにして"), { ext: ".pdf", word: "PDF" });
+  // In an A-to-B sentence, B is the deliverable.
+  assert.equal(wantedArtifact("CSVをエクセルに変換して")?.ext, ".xlsx");
+  assert.equal(wantedArtifact("エクセルをCSVにして")?.ext, ".csv");
+  // Reading and explaining are not creating.
+  assert.equal(wantedArtifact("sales.xlsx を読んで内容を教えて"), undefined);
+  assert.equal(wantedArtifact("エクセルの使い方を教えて"), undefined);
+  // A hint riding on the question may name a format; only the person's words count.
+  assert.equal(
+    wantedArtifact("[doc-skill: doc.toml から XLSX を組み立てる] 今日は何曜日？"),
+    undefined,
+  );
+  assert.equal(wantedArtifact("おはよう"), undefined);
+
+  // The snapshot sees a new file and only a new one.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gahoole-deliv-"));
+  fs.writeFileSync(path.join(dir, "old.xlsx"), "x");
+  const before = artifactsOnDisk(dir, ".xlsx");
+  assert.equal(before.size, 1);
+  fs.mkdirSync(path.join(dir, "out"));
+  fs.writeFileSync(path.join(dir, "out", "new.xlsx"), "y");
+  const after = artifactsOnDisk(dir, ".xlsx");
+  assert.equal([...after].filter((f) => !before.has(f)).length, 1, "the new one, nested");
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// --- and the loop holds the turn to it ------------------------------------------
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gahoole-deliv-loop-"));
+  const was = process.cwd();
+  process.chdir(dir);
+  try {
+    const making = {
+      ...tools,
+      write_file: {
+        description: "Write a file",
+        inputSchema: { shape: { path: 0, content: 0 } },
+        execute: async (i: unknown) => ({ path: (i as { path: string }).path, bytes: 1 }),
+      },
+      run_command: {
+        description: "Run a command",
+        inputSchema: { shape: { command: 0, args: 0 } },
+        execute: async () => {
+          // The script is what makes the artifact — no write_file names it.
+          fs.writeFileSync(path.join(dir, "シフト管理表.xlsx"), "xlsx");
+          return { stdout: "made it", code: 0 };
+        },
+      },
+    };
+    const stub = new StubBackend([
+      'TOOL_CALL: {"tool":"write_file","input":{"path":"shift_data.json","content":"[]"}}',
+      "データを作成しました。", // wrong file, clean stop — the failure measured live
+      'TOOL_CALL: {"tool":"run_command","input":{"command":"python3","args":["make.py"]}}',
+      "シフト管理表.xlsx を作成しました。",
+    ]);
+    const loop = new ToolLoop(stub, making, lifecycle, 2);
+    loop.reset();
+    const answer = await inTurn(() => loop.ask("シフト管理表作ってエクセルで作って"));
+
+    const nudge = stub.prompts.find((q) => q.includes(".xlsx file"));
+    assert.ok(nudge, "told which file is missing, in the words of the request");
+    assert.match(nudge!, /エクセル/);
+    assert.ok(fs.existsSync(path.join(dir, "シフト管理表.xlsx")), "and it got made");
+    assert.match(answer, /作成しました/);
+
+    // A clarifying question is an answer, not a stall.
+    const asking = new StubBackend(["何名分のシフトですか？"]);
+    const politely = new ToolLoop(asking, making, lifecycle, 2);
+    politely.reset();
+    await inTurn(() => politely.ask("エクセルでシフト表作って"));
+    assert.equal(asking.prompts.length, 1, "no nudge over a question to the person");
+  } finally {
+    process.chdir(was);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// --- choosing a skill is a call, not a sentence ---------------------------------
+//
+// The turn ends when use_skill appears — the choice is all it was for, and
+// the caller runs the steps next. That early return used to sit before the
+// execute loop, so the call was parsed and never made: onSelect never fired,
+// the caller had nothing to run, and the turn reported success with the wrong
+// file on disk. The call has to happen; only its results must not go back.
+{
+  let chosen = "";
+  const choosing = {
+    ...tools,
+    use_skill: {
+      description: "Load a skill",
+      inputSchema: { shape: { name: 0, args: 0 } },
+      execute: async (i: unknown) => {
+        chosen = (i as { name: string }).name;
+        return { skill: chosen, note: "Selected." };
+      },
+    },
+  };
+  const stub = new StubBackend([
+    'TOOL_CALL: {"tool":"use_skill","input":{"name":"doc-new","args":"shift_data.json"}}',
+    "should never be asked",
+  ]);
+  const loop = new ToolLoop(stub, choosing, lifecycle, 4);
+  loop.reset();
+  await inTurn(() => loop.ask("シフト表を作って"));
+
+  assert.equal(chosen, "doc-new", "the choice was actually made");
+  assert.equal(stub.prompts.length, 1, "and its result was not sent back");
 }
 
 console.log(
