@@ -29,18 +29,30 @@ Google のアカウントもログインも要りません。
 
 ## インストール
 
-配布ファイル `gahoole-0.1.0.tgz` を受け取ったら、ターミナルで次の1行：
+ターミナルを開いて、次の1行を貼り付けて Enter：
 
 ```bash
-npm install -g ~/Downloads/gahoole-0.1.0.tgz
+npm install -g https://github.com/net-runners-com/gahoole/releases/download/v0.1.0/gahoole-0.1.0.tgz
 ```
 
-（`~/Downloads/` の部分は、ファイルを置いた場所に合わせてください。
-ターミナルに `npm install -g ` と打ってから、ファイルをドラッグ&ドロップすると
-場所が自動で入ります。）
+1分ほどで終わります。
 
-配布ファイルを作る側は、このリポジトリで `npm run dist` を実行すると
-`gahoole-0.1.0.tgz` ができます。
+<details>
+<summary>ソースから入れる場合（開発者向け）</summary>
+
+```bash
+git clone https://github.com/net-runners-com/gahoole.git
+cd gahoole
+npm install
+npm link
+```
+
+`npm run dist` で配布用の `gahoole-0.1.0.tgz` を作れます。
+`npm install -g github:net-runners-com/gahoole` は npm のバージョンによって
+git 依存の扱いが変わり、うまく入らないことがあります。上のリリース URL か
+clone を使ってください。
+
+</details>
 
 ## 使う
 
