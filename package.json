@@ -11,7 +11,7 @@
     "demo": "tsx src/demo.ts",
     "smoke:handoff": "tsx src/smoke-handoff.ts",
     "build": "tsc",
-    "prepare": "npm run build",
+    "prepare": "node -e \"const f='node_modules/typescript/bin/tsc';const fs=require('fs');if(fs.existsSync(f))require('child_process').execFileSync(process.execPath,[f],{stdio:'inherit'});else console.log('prepare: no typescript here, leaving dist as shipped')\"",
     "smoke:aimode": "tsx src/smoke-aimode.ts",
     "smoke:tools": "tsx src/smoke-tools.ts",
     "smoke:protocol": "tsx src/smoke-protocol.ts",
