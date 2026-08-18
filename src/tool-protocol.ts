@@ -317,6 +317,96 @@ function scanJson(text: string, from: number): { json: string; end: number } | u
   return undefined;
 }
 
+
+/**
+ * `TOOL_CALL: write_file` followed by `key: value` lines.
+ *
+ * Not a shape anything asked for — the preamble teaches JSON and says so twice
+ * — but a shape models reach for anyway, and the cost of refusing it is not
+ * "no file". It is worse: the call is printed to the person as prose, the loop
+ * says nothing ran, the model repeats the identical reply, and two queries buy
+ * nothing. Measured on a real session asking for a shift table.
+ *
+ * A block scalar (`|`, `|-`, `>`, `>-`) takes every remaining line, because
+ * the content models put there is a file — CSV rows at column zero, blank
+ * lines and all — and any rule about where it ends other than "the next
+ * marker, or the end" cuts a file in half.
+ */
+function scanKeyed(
+  text: string,
+  from: number,
+): { tool: string; input: Record<string, unknown>; end: number } | undefined {
+  const lineEnd = text.indexOf("\n", from);
+  const head = text.slice(from, lineEnd === -1 ? text.length : lineEnd);
+  // Only the markdown around it — `_` is emphasis outside a name and part
+  // of `write_file` inside one.
+  const tool = head.trim().replace(/^[*_`]+|[*_`]+$/g, "");
+  if (!/^[a-z_][a-z0-9_]*$/i.test(tool)) return undefined;
+  if (lineEnd === -1) return undefined;
+
+  const input: Record<string, unknown> = {};
+  let at = lineEnd + 1;
+  let seen = 0;
+
+  while (at < text.length) {
+    const nl = text.indexOf("\n", at);
+    const line = text.slice(at, nl === -1 ? text.length : nl);
+    if (/^[\s>*_`]*(TOOL_CALL|TOOL_RESULT):/.test(line)) break;
+    const m = line.match(/^[ \t]*([a-z_][a-z0-9_]*)[ \t]*:[ \t]*(.*)$/i);
+    if (!m) {
+      // A blank line between keys is fine; anything else ends the call.
+      if (line.trim() === "" && seen > 0) {
+        at = nl === -1 ? text.length : nl + 1;
+        continue;
+      }
+      break;
+    }
+    const key = m[1]!;
+    const value = (m[2] ?? "").trim();
+    at = nl === -1 ? text.length : nl + 1;
+
+    if (/^[|>]-?\+?$/.test(value)) {
+      // Everything left, to the next marker or the end.
+      let stop = text.length;
+      const marker = text.slice(at).search(/^[\s>*_`]*(TOOL_CALL|TOOL_RESULT):/m);
+      if (marker !== -1) stop = at + marker;
+      const block = text.slice(at, stop).replace(/\n+$/, "");
+      // Indented uniformly? Then the indent is YAML's, not the file's.
+      const lines = block.split("\n");
+      const indents = lines
+        .filter((l) => l.trim() !== "")
+        .map((l) => (l.match(/^[ \t]*/)?.[0] ?? "").length);
+      const common = indents.length > 0 ? Math.min(...indents) : 0;
+      input[key] = common > 0 ? lines.map((l) => l.slice(common)).join("\n") : block;
+      seen++;
+      at = stop;
+      break;
+    }
+
+    input[key] = readScalar(value);
+    seen++;
+  }
+
+  if (seen === 0) return undefined;
+  return { tool, input, end: at };
+}
+
+/** `"quoted"`, a number, a boolean, JSON, or the text as written. */
+function readScalar(value: string): unknown {
+  if (/^".*"$/.test(value) || /^\[.*\]$/.test(value) || /^\{.*\}$/.test(value)) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      /* as written, then */
+    }
+  }
+  if (/^'.*'$/.test(value)) return value.slice(1, -1);
+  if (value === "true") return true;
+  if (value === "false") return false;
+  if (/^-?\d+(\.\d+)?$/.test(value)) return Number(value);
+  return value;
+}
+
 export function parseCalls(text: string): ParsedCall[] {
   // Found by counting braces, not by matching a line.
   //
@@ -334,11 +424,20 @@ export function parseCalls(text: string): ParsedCall[] {
     body: (m[1] ?? "").replace(/\n$/, ""),
   }));
 
-  const raw: { at: number; tool: string; input: Record<string, unknown> }[] = [];
+  const raw: {
+    at: number;
+    tool: string;
+    input: Record<string, unknown>;
+    keyed?: boolean;
+  }[] = [];
   for (let at = text.indexOf(CALL_PREFIX); at !== -1; at = text.indexOf(CALL_PREFIX, at + 1)) {
     const after = at + CALL_PREFIX.length;
     const scanned = scanJson(text, after);
-    if (!scanned) continue;
+    if (!scanned) {
+      const keyed = scanKeyed(text, after);
+      if (keyed) raw.push({ at, tool: keyed.tool, input: keyed.input, keyed: true });
+      continue;
+    }
     // `TOOL_CALL: run_command {…}` — the name written outside the JSON.
     const named = text.slice(after, scanned.end).match(/^[ \t]*([a-z_][a-z0-9_]*)[ \t]*\{/i);
     try {
@@ -356,14 +455,15 @@ export function parseCalls(text: string): ParsedCall[] {
 
   const calls: ParsedCall[] = [];
   for (let i = 0; i < raw.length; i++) {
-    const { at, tool, input } = raw[i]!;
+    const { at, tool, input, keyed } = raw[i]!;
     const until = raw[i + 1]?.at ?? Number.POSITIVE_INFINITY;
     // A fenced block belongs to the call above it, up to the next one. With a
     // single call a block written before the marker still counts, since models
     // put the code first about as often as last.
-    const body =
-      fences.find((f) => f.at > at && f.at < until)?.body ??
-      (raw.length === 1 ? parseBody(text) : undefined);
+    const body = keyed
+      ? undefined // its content came with it
+      : (fences.find((f) => f.at > at && f.at < until)?.body ??
+        (raw.length === 1 ? parseBody(text) : undefined));
     if (body !== undefined && input.content === undefined) input.content = body;
     calls.push({ tool, input });
   }
@@ -396,7 +496,22 @@ export function parseMalformed(text: string): MalformedCall[] {
 
 /** The answer with the marker lines removed, for showing to the user. */
 export function stripCalls(text: string): string {
-  return text.replace(CALL_LINE_RE, "").replace(/\n{3,}/g, "\n\n").trim();
+  // The keyed form first, because it has no closing brace to match on: its
+  // extent is whatever scanKeyed consumed, and a file left in the prose is
+  // both unreadable and a lie about what happened.
+  let out = "";
+  let from = 0;
+  for (let at = text.indexOf(CALL_PREFIX); at !== -1; at = text.indexOf(CALL_PREFIX, at + 1)) {
+    const after = at + CALL_PREFIX.length;
+    if (scanJson(text, after)) continue; // handled by the pattern below
+    const keyed = scanKeyed(text, after);
+    if (!keyed) continue;
+    out += text.slice(from, at);
+    from = keyed.end;
+    at = keyed.end - CALL_PREFIX.length; // resume the scan past it
+  }
+  out += text.slice(from);
+  return out.replace(CALL_LINE_RE, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 export function formatResult(

@@ -918,5 +918,74 @@ assert.equal(parsePlan(Array.from({ length: 40 }, (_, i) => `${i}. step number $
   assert.equal(looksLikeSearch("3 件のファイルを読みました。"), false, "not every count is a search");
 }
 
+// --- TOOL_CALL with keys instead of JSON --------------------------------------
+//
+// Not a shape anything asked for; a shape models reach for anyway. Asked for a
+// shift table, the reply was `TOOL_CALL: write_file` with `path:` and
+// `content: |-` and a CSV underneath — and being refused cost more than the
+// file: the call was printed to the person as prose, the loop said nothing
+// ran, the model repeated the identical reply, and two queries bought nothing.
+{
+  const keyed = [
+    "TOOL_CALL: write_file",
+    'path: "shift.csv"',
+    "content: |-",
+    "氏名,1,2,3",
+    "山田,早,遅,公",
+    "",
+    "【凡例】,,,",
+  ].join("\n");
+
+  const [call] = parseCalls(keyed);
+  assert.equal(call?.tool, "write_file", "the underscore is part of the name");
+  assert.equal((call?.input as { path?: string }).path, "shift.csv", "quotes come off");
+  const content = String((call?.input as { content?: string }).content);
+  assert.equal(content.split("\n").length, 4, "a blank line inside the file is the file's");
+  assert.equal(content.split("\n").at(-1), "【凡例】,,,");
+  assert.equal(stripCalls(keyed), "", "and none of it is shown as prose");
+
+  // The block runs to the next marker, not to the end.
+  const two = [
+    "TOOL_CALL: write_file",
+    "path: a.txt",
+    "content: |",
+    "one",
+    "two",
+    "TOOL_CALL: write_file",
+    "path: b.txt",
+    "content: |-",
+    "three",
+  ].join("\n");
+  const both = parseCalls(two);
+  assert.equal(both.length, 2);
+  assert.equal(String((both[0]!.input as { content?: string }).content), "one\ntwo");
+  assert.equal(String((both[1]!.input as { content?: string }).content), "three");
+  assert.equal(stripCalls(two), "");
+
+  // Indented content: the indent is YAML's, not the file's.
+  const indented = "TOOL_CALL: write_file\npath: x.py\ncontent: |-\n  print(1)\n  print(2)";
+  assert.equal(
+    String((parseCalls(indented)[0]!.input as { content?: string }).content),
+    "print(1)\nprint(2)",
+  );
+
+  // Scalars other than strings.
+  const scalars = "TOOL_CALL: read_file\npath: README.md\noffset: 10\nlimit: 5";
+  const read = parseCalls(scalars)[0]!;
+  assert.deepEqual(read.input, { path: "README.md", offset: 10, limit: 5 });
+
+  // A list, written as JSON on the line, which is how run_command arrives.
+  const args = 'TOOL_CALL: run_command\ncommand: python3\nargs: ["build.py", "--now"]';
+  assert.deepEqual((parseCalls(args)[0]!.input as { args?: unknown }).args, ["build.py", "--now"]);
+
+  // Prose that merely mentions the marker is still prose.
+  assert.deepEqual(parseCalls("TOOL_CALL: と書けば動きます。"), []);
+  assert.deepEqual(parseCalls("TOOL_CALL: write_file\nこれは説明文です。"), []);
+
+  // The JSON form still wins where both could match.
+  const json = `${CALL_PREFIX} {"tool":"read_file","input":{"path":"a"}}`;
+  assert.deepEqual(parseCalls(json), [{ tool: "read_file", input: { path: "a" } }]);
+}
+
 console.log("ok — protocol: calls, bodies, budgets, plans, verdicts");
 process.exit(0);
